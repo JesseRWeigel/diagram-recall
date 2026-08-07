@@ -1,0 +1,15 @@
+{
+  "name": "diagram-recall",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Rebuild a mermaid diagram from a shuffled pile of nodes and edges, scored by graph edit distance",
+  "license": "MIT",
+  "bin": { "recall": "bin/recall.js" },
+  "scripts": {
+    "test": "node --test tests/",
+    "fixtures": "node bin/recall.js fixtures",
+    "verify": "bash scripts/verify.sh"
+  },
+  "engines": { "node": ">=20.0.0" }
+}

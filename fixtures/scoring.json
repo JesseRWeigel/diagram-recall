@@ -1,0 +1,447 @@
+{
+  "about": [
+    "Scoring fixtures. Every `expect` block below was worked out by hand from the cost model in",
+    "src/score.js and then written down here, before the scorer was run against it. Two",
+    "independent implementations are held to these numbers: the JavaScript scorer, via",
+    "`node bin/recall.js fixtures`, and a separate Python reimplementation in",
+    "scripts/check_independent.py that shares no code with it.",
+    "",
+    "The first case is the negative control and it must score zero. A scorer that always finds",
+    "something wrong passes every suite built only out of wrong answers, so a suite without a",
+    "perfect reconstruction in it proves nothing."
+  ],
+  "costModel": {
+    "unit": 1,
+    "reversal": "one structural edit, not a deletion plus an insertion",
+    "buckets": ["structure", "label", "style", "grouping"]
+  },
+  "cases": [
+    {
+      "name": "perfect reconstruction scores zero",
+      "role": "negative control",
+      "reference": "graph TD\n  Sun[Sunlight] --> Leaf[Leaf]\n  Leaf -->|glucose| Growth[Growth]\n  Water[Water] --> Leaf",
+      "attempt": "graph TD\n  Growth[Growth]\n  Leaf[Leaf] -->|glucose| Growth\n  Water[Water] --> Leaf\n  Sun[Sunlight] --> Leaf",
+      "derivation": [
+        "Same four nodes with the same captions and the same default shape.",
+        "Same three directed pairs with the same labels, written in a different order and with",
+        "the nodes declared in a different order. Statement order is not part of a graph, so",
+        "there is nothing to charge for. Distance 0."
+      ],
+      "expect": {
+        "structure": 0,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 0,
+        "exact": true,
+        "mode": "identity",
+        "findings": []
+      }
+    },
+    {
+      "name": "one reversed relation is one error and is named as such",
+      "role": "reversed edge",
+      "reference": "graph TD\n  Hypothesis --> Experiment\n  Experiment --> Result",
+      "attempt": "graph TD\n  Experiment --> Hypothesis\n  Experiment --> Result",
+      "derivation": [
+        "Nodes identical, so no node cost.",
+        "Experiment --> Result matches exactly.",
+        "Reference has Hypothesis --> Experiment and nothing matches it. The attempt has",
+        "Experiment --> Hypothesis and nothing matches that. Neither graph holds a second link",
+        "between the pair in the other direction, so this is one reversal, cost 1, and it is",
+        "reported once. Textbook graph edit distance would charge 2 here.",
+        "Structure 1, everything else 0."
+      ],
+      "expect": {
+        "structure": 1,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 1,
+        "exact": true,
+        "mode": "identity",
+        "findings": [{ "type": "edge-reversed", "from": "Hypothesis", "to": "Experiment" }]
+      }
+    },
+    {
+      "name": "a reversal keeps its label when the label is right",
+      "role": "reversed edge with a label",
+      "reference": "graph LR\n  Rain -->|feeds| River\n  River --> Sea",
+      "attempt": "graph LR\n  River -->|feeds| Rain\n  River --> Sea",
+      "derivation": [
+        "River --> Sea matches. Rain -->|feeds| River is reversed into River -->|feeds| Rain.",
+        "The reversal pass pairs them and then compares their attributes: both carry the label",
+        "\"feeds\", so there is no label cost. Structure 1, label 0."
+      ],
+      "expect": {
+        "structure": 1,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 1,
+        "exact": true,
+        "mode": "identity",
+        "findings": [{ "type": "edge-reversed", "from": "Rain", "to": "River" }]
+      }
+    },
+    {
+      "name": "an added opposite link is an extra edge and NOT a reversal",
+      "role": "negative control for the reversal detector",
+      "reference": "graph TD\n  A --> B",
+      "attempt": "graph TD\n  A --> B\n  B --> A",
+      "derivation": [
+        "A --> B matches exactly, so the reference has nothing left over.",
+        "The reversal pass needs an unmatched reference link and finds none, so B --> A cannot",
+        "be a reversal of anything. It is one extra relation. Structure 1.",
+        "This case exists because a reversal detector that only looks for an opposing link,",
+        "without checking that the forward link went unmatched, calls this a reversal and",
+        "tells the learner they got backwards a relation they in fact got right."
+      ],
+      "expect": {
+        "structure": 1,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 1,
+        "exact": true,
+        "mode": "identity",
+        "findings": [{ "type": "edge-extra", "from": "B", "to": "A" }]
+      }
+    },
+    {
+      "name": "dropping one side of a two way pair is a missing edge, not a reversal",
+      "role": "negative control for the reversal detector",
+      "reference": "graph TD\n  A --> B\n  B --> A",
+      "attempt": "graph TD\n  B --> A",
+      "derivation": [
+        "B --> A matches exactly. The reference's A --> B is left over, and the attempt has",
+        "nothing left over for it to pair with, so it is a plain missing relation.",
+        "Structure 1."
+      ],
+      "expect": {
+        "structure": 1,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 1,
+        "exact": true,
+        "mode": "identity",
+        "findings": [{ "type": "edge-missing", "from": "A", "to": "B" }]
+      }
+    },
+    {
+      "name": "two reversals are two errors",
+      "role": "reversed edges",
+      "reference": "graph TD\n  A --> B\n  B --> C\n  C --> D",
+      "attempt": "graph TD\n  B --> A\n  B --> C\n  D --> C",
+      "derivation": [
+        "B --> C matches. A --> B is reversed, C --> D is reversed. Two independent reversals,",
+        "one structural edit each. Structure 2."
+      ],
+      "expect": {
+        "structure": 2,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 2,
+        "exact": true,
+        "mode": "identity",
+        "findings": [
+          { "type": "edge-reversed", "from": "A", "to": "B" },
+          { "type": "edge-reversed", "from": "C", "to": "D" }
+        ]
+      }
+    },
+    {
+      "name": "the shape is right and one link label is wrong",
+      "role": "label only error",
+      "reference": "graph LR\n  Source -->|compiles to| Object\n  Object -->|links to| Binary",
+      "attempt": "graph LR\n  Source -->|compiles to| Object\n  Object -->|objects| Binary",
+      "derivation": [
+        "Both relations exist and point the right way, so structure is 0.",
+        "One link label differs. Label 1. Total 1, and the report has to say the shape is",
+        "correct, because that is the difference between misremembering a word and not having",
+        "the model."
+      ],
+      "expect": {
+        "structure": 0,
+        "label": 1,
+        "style": 0,
+        "grouping": 0,
+        "total": 1,
+        "exact": true,
+        "mode": "identity",
+        "findings": [{ "type": "edge-label", "from": "Object", "to": "Binary" }]
+      }
+    },
+    {
+      "name": "a node caption is wrong and nothing else is",
+      "role": "label only error",
+      "reference": "graph TD\n  A[Producer] --> B[Consumer]",
+      "attempt": "graph TD\n  A[Producer] --> B[Customer]",
+      "derivation": [
+        "Same node ids, same relation, same direction. Structure 0.",
+        "One node caption differs. Label 1."
+      ],
+      "expect": {
+        "structure": 0,
+        "label": 1,
+        "style": 0,
+        "grouping": 0,
+        "total": 1,
+        "exact": true,
+        "mode": "identity",
+        "findings": [{ "type": "node-label", "id": "B" }]
+      }
+    },
+    {
+      "name": "structurally wrong: one relation missing and one invented",
+      "role": "structural error",
+      "reference": "graph TD\n  A --> B\n  B --> C\n  C --> D",
+      "attempt": "graph TD\n  A --> B\n  B --> C\n  A --> D",
+      "derivation": [
+        "A --> B and B --> C match. C --> D is missing. A --> D is extra, and it is not the",
+        "reverse of C --> D because it does not join the same pair. Two independent structural",
+        "edits. Structure 2."
+      ],
+      "expect": {
+        "structure": 2,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 2,
+        "exact": true,
+        "mode": "identity",
+        "findings": [
+          { "type": "edge-missing", "from": "C", "to": "D" },
+          { "type": "edge-extra", "from": "A", "to": "D" }
+        ]
+      }
+    },
+    {
+      "name": "a missing node takes its relations with it",
+      "role": "structural error",
+      "reference": "graph TD\n  A --> B\n  B --> C",
+      "attempt": "graph TD\n  A --> B",
+      "derivation": [
+        "A --> B matches. Node C is absent: one node deletion.",
+        "B --> C cannot be placed because one endpoint is gone, so it is also deleted.",
+        "Structure 2."
+      ],
+      "expect": {
+        "structure": 2,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 2,
+        "exact": true,
+        "mode": "identity",
+        "findings": [
+          { "type": "node-missing", "id": "C" },
+          { "type": "edge-missing", "from": "B", "to": "C" }
+        ]
+      }
+    },
+    {
+      "name": "an arrow where the reference has a plain line",
+      "role": "structural error",
+      "reference": "graph TD\n  A --- B",
+      "attempt": "graph TD\n  A --> B",
+      "derivation": [
+        "The pair is right and the claim about it is not. An undirected link and a directed",
+        "one have different structural keys, so nothing matches in the first pass, and the",
+        "directedness pass reports one edit. Structure 1."
+      ],
+      "expect": {
+        "structure": 1,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 1,
+        "exact": true,
+        "mode": "identity",
+        "findings": [{ "type": "edge-direction", "from": "A", "to": "B" }]
+      }
+    },
+    {
+      "name": "shape and line style are style, not structure",
+      "role": "style only error",
+      "reference": "graph TD\n  A{Decision} -.-> B[Task]",
+      "attempt": "graph TD\n  A[Decision] --> B[Task]",
+      "derivation": [
+        "Same nodes, same captions, same relation, same direction. Structure 0, label 0.",
+        "A is a diamond in the reference and a rectangle in the attempt: style 1.",
+        "The link is dotted in the reference and solid in the attempt: style 1.",
+        "Style 2, total 2, and the report has to say the diagram claims the right thing."
+      ],
+      "expect": {
+        "structure": 0,
+        "label": 0,
+        "style": 2,
+        "grouping": 0,
+        "total": 2,
+        "exact": true,
+        "mode": "identity",
+        "findings": [
+          { "type": "node-shape", "id": "A" },
+          { "type": "edge-style", "from": "A", "to": "B" }
+        ]
+      }
+    },
+    {
+      "name": "a reversal and a label error on different relations add up",
+      "role": "mixed",
+      "reference": "graph TD\n  A -->|first| B\n  B -->|second| C",
+      "attempt": "graph TD\n  B -->|first| A\n  B -->|two| C",
+      "derivation": [
+        "A -->|first| B is reversed and the label survives: structure 1, label 0 for it.",
+        "B --> C points the right way and its label is wrong: structure 0, label 1.",
+        "Structure 1, label 1, total 2."
+      ],
+      "expect": {
+        "structure": 1,
+        "label": 1,
+        "style": 0,
+        "grouping": 0,
+        "total": 2,
+        "exact": true,
+        "mode": "identity",
+        "findings": [
+          { "type": "edge-reversed", "from": "A", "to": "B" },
+          { "type": "edge-label", "from": "B", "to": "C" }
+        ]
+      }
+    },
+    {
+      "name": "a node in the wrong subgraph is a grouping error",
+      "role": "grouping error",
+      "reference": "graph TD\n  subgraph Ingest\n    A --> B\n  end\n  subgraph Serve\n    C\n  end\n  B --> C",
+      "attempt": "graph TD\n  subgraph Ingest\n    A --> B\n    C\n  end\n  subgraph Serve\n    D[Serve]\n  end\n  B --> C",
+      "derivation": [
+        "Nodes A, B and C exist in both with the same captions and shapes.",
+        "The attempt adds node D, which the reference does not have: structure 1.",
+        "Both relations match. C sits in Serve in the reference and in Ingest in the attempt:",
+        "grouping 1. Structure 1, grouping 1, total 2.",
+        "The attempt uses an identifier the reference does not have, so the correspondence is",
+        "no longer given and the exact search runs. Four nodes is below the cap. The search",
+        "returns A->A, B->B, C->C with D inserted, which is the correspondence above."
+      ],
+      "expect": {
+        "structure": 1,
+        "label": 0,
+        "style": 0,
+        "grouping": 1,
+        "total": 2,
+        "exact": true,
+        "mode": "exact",
+        "findings": [
+          { "type": "node-extra", "id": "D" },
+          { "type": "node-grouping", "id": "C" }
+        ]
+      }
+    },
+    {
+      "name": "renamed nodes force a correspondence search",
+      "role": "exact search",
+      "reference": "graph TD\n  A[Heat] --> B[Steam]\n  B --> C[Turbine]",
+      "attempt": "graph TD\n  X[Heat] --> Y[Steam]\n  Y --> Z[Turbine]",
+      "derivation": [
+        "No attempt identifier exists in the reference, so the identity correspondence does not",
+        "apply and the search runs. Three nodes is below the exact cap, so branch and bound",
+        "finds A->X, B->Y, C->Z, under which every caption and every relation matches.",
+        "Distance 0, reported as exact."
+      ],
+      "expect": {
+        "structure": 0,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 0,
+        "exact": true,
+        "mode": "exact",
+        "findings": []
+      }
+    },
+    {
+      "name": "renamed nodes with one reversal still finds the reversal",
+      "role": "exact search plus reversed edge",
+      "reference": "graph TD\n  A[Heat] --> B[Steam]\n  B --> C[Turbine]",
+      "attempt": "graph TD\n  Y[Steam] --> X[Heat]\n  Y --> Z[Turbine]",
+      "derivation": [
+        "The best correspondence is still A->X, B->Y, C->Z, because it makes every caption",
+        "agree and leaves only the Heat to Steam link turned round.",
+        "Under it, B --> C matches, and A --> B is reversed. Structure 1.",
+        "No other correspondence does better: any mapping that disagrees on a caption pays 1",
+        "for that caption and cannot save more than 1 on the links."
+      ],
+      "expect": {
+        "structure": 1,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 1,
+        "exact": true,
+        "mode": "exact",
+        "findings": [{ "type": "edge-reversed", "from": "A", "to": "B" }]
+      }
+    },
+    {
+      "name": "above the exact cap the answer is an upper bound and says so",
+      "role": "approximation",
+      "reference": "graph TD\n  A1[One] --> A2[Two]\n  A2 --> A3[Three]\n  A3 --> A4[Four]\n  A4 --> A5[Five]\n  A5 --> A6[Six]\n  A6 --> A7[Seven]\n  A7 --> A8[Eight]\n  A8 --> A9[Nine]\n  A9 --> A10[Ten]",
+      "attempt": "graph TD\n  B1[One] --> B2[Two]\n  B2 --> B3[Three]\n  B3 --> B4[Four]\n  B4 --> B5[Five]\n  B5 --> B6[Six]\n  B6 --> B7[Seven]\n  B7 --> B8[Eight]\n  B8 --> B9[Nine]\n  B9 --> B10[Ten]",
+      "derivation": [
+        "Ten nodes, every identifier renamed, so the correspondence has to be searched and ten",
+        "is above the exact cap of eight. The bipartite heuristic runs instead.",
+        "Every caption is unique and appears in both graphs, so the assignment that pairs equal",
+        "captions costs nothing in the cost matrix and is the one the Hungarian solver picks.",
+        "Under it the two chains are identical, so the edit script it produces is empty and the",
+        "upper bound is 0. An upper bound of 0 pins the true distance at 0, since a distance",
+        "cannot be negative. The result is still reported with exact false and bound upper,",
+        "because the method cannot prove optimality in general and must not claim to."
+      ],
+      "expect": {
+        "structure": 0,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 0,
+        "exact": false,
+        "mode": "approx",
+        "findings": []
+      }
+    },
+    {
+      "name": "forcing the identity correspondence on renamed nodes rebuilds the whole graph",
+      "role": "mode override",
+      "reference": "graph TD\n  A[Heat] --> B[Steam]",
+      "attempt": "graph TD\n  X[Heat] --> Y[Steam]",
+      "options": { "mapping": "identity" },
+      "derivation": [
+        "The identity correspondence is asked for explicitly, and no attempt identifier exists",
+        "in the reference, so nothing pairs up.",
+        "Two reference nodes deleted, two attempt nodes inserted: 4.",
+        "The reference link cannot be placed, and the attempt link has no counterpart: 2 more.",
+        "Structure 6, total 6. This is the honest cost of that correspondence, and it is why",
+        "auto does not choose it when the identifiers disagree."
+      ],
+      "expect": {
+        "structure": 6,
+        "label": 0,
+        "style": 0,
+        "grouping": 0,
+        "total": 6,
+        "exact": true,
+        "mode": "identity",
+        "findings": [
+          { "type": "node-missing", "id": "A" },
+          { "type": "node-missing", "id": "B" },
+          { "type": "node-extra", "id": "X" },
+          { "type": "node-extra", "id": "Y" },
+          { "type": "edge-missing", "from": "A", "to": "B" },
+          { "type": "edge-extra", "from": "X", "to": "Y" }
+        ]
+      }
+    }
+  ]
+}

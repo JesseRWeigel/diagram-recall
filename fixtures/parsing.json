@@ -1,0 +1,257 @@
+{
+  "about": [
+    "Parsing fixtures. Each case states the nodes, the links and the diagnostics a mermaid",
+    "block must produce. `edges` are written as `from kind head to label`, one string per link,",
+    "sorted the way graphToJSON sorts them.",
+    "",
+    "The cases that matter most are the ones at the bottom, where the parser meets syntax it",
+    "does not support. A dropped link makes the reference graph wrong and the learner is then",
+    "marked down for the tool's gap, so every one of those has to raise an error diagnostic",
+    "naming the line."
+  ],
+  "cases": [
+    {
+      "name": "graph TD with the four common node shapes",
+      "source": "graph TD\n  A[Rect] --> B(Round)\n  B --> C{Diamond}\n  C --> D((Circle))",
+      "expect": {
+        "direction": "TD",
+        "nodes": ["A rect Rect", "B round Round", "C diamond Diamond", "D circle Circle"],
+        "edges": [
+          "A solid arrow B",
+          "B solid arrow C",
+          "C solid arrow D"
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "flowchart LR with the less common shapes",
+      "source": "flowchart LR\n  A([Stadium]) --> B[[Subroutine]]\n  B --> C[(Cylinder)]\n  C --> D{{Hexagon}}\n  D --> E[/Parallelogram/]\n  E --> F>Flag]\n  F --> G(((Double)))",
+      "expect": {
+        "direction": "LR",
+        "nodes": [
+          "A stadium Stadium",
+          "B subroutine Subroutine",
+          "C cylinder Cylinder",
+          "D hexagon Hexagon",
+          "E parallelogram Parallelogram",
+          "F asymmetric Flag",
+          "G double-circle Double"
+        ],
+        "edges": [
+          "A solid arrow B",
+          "B solid arrow C",
+          "C solid arrow D",
+          "D solid arrow E",
+          "E solid arrow F",
+          "F solid arrow G"
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "every link kind and head",
+      "source": "graph TD\n  A --> B\n  A --- C\n  A -.-> D\n  A ==> E\n  A --o F\n  A --x G\n  A -.- H\n  A === I\n  A ----> J",
+      "expect": {
+        "direction": "TD",
+        "nodes": [
+          "A rect A", "B rect B", "C rect C", "D rect D", "E rect E",
+          "F rect F", "G rect G", "H rect H", "I rect I", "J rect J"
+        ],
+        "edges": [
+          "A dotted arrow D",
+          "A dotted open H",
+          "A solid arrow B",
+          "A solid arrow J",
+          "A solid circle F",
+          "A solid cross G",
+          "A solid open C",
+          "A thick arrow E",
+          "A thick open I"
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "labels in both the pipe form and the mid link form",
+      "source": "graph TD\n  A -->|yes| B\n  A -- no --> C\n  A -.->|maybe| D\n  A -. perhaps .-> E\n  A ==>|surely| F\n  A == certainly ==> G\n  A -- open link --- H",
+      "expect": {
+        "direction": "TD",
+        "nodes": [
+          "A rect A", "B rect B", "C rect C", "D rect D",
+          "E rect E", "F rect F", "G rect G", "H rect H"
+        ],
+        "edges": [
+          "A dotted arrow D maybe",
+          "A dotted arrow E perhaps",
+          "A solid arrow B yes",
+          "A solid arrow C no",
+          "A solid open H open link",
+          "A thick arrow F surely",
+          "A thick arrow G certainly"
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "a mid link label containing a hyphen",
+      "source": "graph LR\n  Build -- fetch-deps --> Test",
+      "expect": {
+        "direction": "LR",
+        "nodes": ["Build rect Build", "Test rect Test"],
+        "edges": ["Build solid arrow Test fetch-deps"],
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "quoted captions containing the delimiter characters",
+      "source": "graph TD\n  A[\"square [brackets] inside\"] --> B{\"curly {braces} inside\"}\n  B -->|\"a | pipe\"| C(\"round (parens) inside\")",
+      "expect": {
+        "direction": "TD",
+        "nodes": [
+          "A rect square [brackets] inside",
+          "B diamond curly {braces} inside",
+          "C round round (parens) inside"
+        ],
+        "edges": ["A solid arrow B", "B solid arrow C a | pipe"],
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "subgraphs, including a nested one and the bracketed title form",
+      "source": "flowchart TB\n  subgraph outer [Outer box]\n    A --> B\n    subgraph inner\n      C --> D\n    end\n    B --> C\n  end\n  D --> E",
+      "expect": {
+        "direction": "TB",
+        "nodes": [
+          "A rect A Outer box",
+          "B rect B Outer box",
+          "C rect C Outer box/inner",
+          "D rect D Outer box/inner",
+          "E rect E"
+        ],
+        "edges": [
+          "A solid arrow B",
+          "B solid arrow C",
+          "C solid arrow D",
+          "D solid arrow E"
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "chains, ampersand groups, semicolons and comments",
+      "source": "graph TD;\n  A --> B --> C;\n  %% this whole line is a comment\n  D & E --> F & G;\n  H --> I %% trailing comment",
+      "expect": {
+        "direction": "TD",
+        "nodes": [
+          "A rect A", "B rect B", "C rect C", "D rect D", "E rect E",
+          "F rect F", "G rect G", "H rect H", "I rect I"
+        ],
+        "edges": [
+          "A solid arrow B",
+          "B solid arrow C",
+          "D solid arrow F",
+          "D solid arrow G",
+          "E solid arrow F",
+          "E solid arrow G",
+          "H solid arrow I"
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "presentation directives are reported and ignored, never dropped in silence",
+      "source": "graph TD\n  A --> B\n  style A fill:#f9f,stroke:#333\n  classDef warn fill:#fee\n  class B warn\n  click A \"https://example.com\" _blank\n  linkStyle 0 stroke-width:2px",
+      "expect": {
+        "direction": "TD",
+        "nodes": ["A rect A", "B rect B"],
+        "edges": ["A solid arrow B"],
+        "diagnostics": [
+          { "severity": "info", "line": 3, "contains": "`style` is presentation only" },
+          { "severity": "info", "line": 4, "contains": "`classdef` is presentation only" },
+          { "severity": "info", "line": 5, "contains": "`class` is presentation only" },
+          { "severity": "info", "line": 6, "contains": "`click` is presentation only" },
+          { "severity": "info", "line": 7, "contains": "`linkstyle` is presentation only" }
+        ]
+      }
+    },
+    {
+      "name": "a bidirectional link becomes two directed links and says so",
+      "source": "graph TD\n  A <--> B\n  C o--o D",
+      "expect": {
+        "direction": "TD",
+        "nodes": ["A rect A", "B rect B", "C rect C", "D rect D"],
+        "edges": [
+          "A solid arrow B",
+          "B solid arrow A",
+          "C solid circle D",
+          "D solid circle C"
+        ],
+        "diagnostics": [
+          { "severity": "warning", "line": 2, "contains": "read as two directed links" },
+          { "severity": "warning", "line": 3, "contains": "read as two directed links" }
+        ]
+      }
+    },
+    {
+      "name": "UNSUPPORTED: the new @{ } node metadata syntax is reported with its line",
+      "source": "graph TD\n  A --> B\n  A@{ shape: rounded }\n  B --> C",
+      "expect": {
+        "direction": "TD",
+        "nodes": ["A rect A", "B rect B", "C rect C"],
+        "edges": ["A solid arrow B", "B solid arrow C"],
+        "diagnostics": [
+          { "severity": "error", "line": 3, "contains": "unexpected \"@{ shape: rounded }\"" }
+        ]
+      }
+    },
+    {
+      "name": "UNSUPPORTED: an unclosed node caption is reported, not guessed at",
+      "source": "graph TD\n  A[Start --> B",
+      "expect": {
+        "direction": "TD",
+        "nodes": [],
+        "edges": [],
+        "diagnostics": [
+          { "severity": "error", "line": 2, "contains": "never closes with" }
+        ]
+      }
+    },
+    {
+      "name": "UNSUPPORTED: a diagram that is not a flowchart is named",
+      "source": "sequenceDiagram\n  Alice ->> Bob: hello",
+      "expect": {
+        "direction": "TD",
+        "nodes": [],
+        "edges": [],
+        "diagnostics": [
+          { "severity": "error", "line": 1, "contains": "only flowcharts are supported" }
+        ]
+      }
+    },
+    {
+      "name": "UNSUPPORTED: a subgraph left open is reported",
+      "source": "graph TD\n  subgraph one\n    A --> B",
+      "expect": {
+        "direction": "TD",
+        "nodes": ["A rect A one", "B rect B one"],
+        "edges": ["A solid arrow B"],
+        "diagnostics": [
+          { "severity": "error", "line": 1, "contains": "never closed with `end`" }
+        ]
+      }
+    },
+    {
+      "name": "UNSUPPORTED: an unclosed link label is reported",
+      "source": "graph TD\n  A -->|yes B",
+      "expect": {
+        "direction": "TD",
+        "nodes": [],
+        "edges": [],
+        "diagnostics": [
+          { "severity": "error", "line": 2, "contains": "never closed" }
+        ]
+      }
+    }
+  ]
+}
