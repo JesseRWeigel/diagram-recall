@@ -1,0 +1,3198 @@
+<!doctype html>
+<html lang="en" data-ready="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagram recall: rebuild a mermaid diagram from memory</title>
+<meta name="description" content="Read an explanation, then rebuild its mermaid diagram from a shuffled pile of pieces. Scored by graph edit distance, with reversed relations named as reversed.">
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf7;
+  --panel: #ffffff;
+  --ink: #1b1c1e;
+  --muted: #5c6066;
+  --line: #d9d6cf;
+  --accent: #7a3d10;
+  --accent-soft: #f3e6da;
+  --good: #1e6b3a;
+  --bad: #97260f;
+  --shadow: 0 1px 2px rgba(20, 18, 14, 0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16171a;
+    --panel: #1e2024;
+    --ink: #ecebe7;
+    --muted: #a2a6ad;
+    --line: #34373d;
+    --accent: #e9a26a;
+    --accent-soft: #33261b;
+    --good: #82d3a0;
+    --bad: #f2957a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+}
+/* The toggle wins over the media query in both directions, so choosing light on a dark
+   system and dark on a light system both work. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #fbfaf7;
+  --panel: #ffffff;
+  --ink: #1b1c1e;
+  --muted: #5c6066;
+  --line: #d9d6cf;
+  --accent: #7a3d10;
+  --accent-soft: #f3e6da;
+  --good: #1e6b3a;
+  --bad: #97260f;
+  --shadow: 0 1px 2px rgba(20, 18, 14, 0.08);
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #16171a;
+  --panel: #1e2024;
+  --ink: #ecebe7;
+  --muted: #a2a6ad;
+  --line: #34373d;
+  --accent: #e9a26a;
+  --accent-soft: #33261b;
+  --good: #82d3a0;
+  --bad: #f2957a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.55 ui-serif, Georgia, 'Iowan Old Style', serif;
+  padding: 0 0 4rem;
+}
+.wrap { max-width: 62rem; margin: 0 auto; padding: 0 1rem; }
+header.masthead {
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  padding: 1.5rem 0 1.25rem;
+  margin-bottom: 1.5rem;
+}
+h1 { font-size: clamp(1.5rem, 5vw, 2.1rem); margin: 0 0 0.35rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.15rem; margin: 0 0 0.6rem; }
+h3 { font-size: 1rem; margin: 1rem 0 0.4rem; }
+p { margin: 0 0 0.75rem; }
+.lede { color: var(--muted); max-width: 46rem; margin: 0; }
+.muted { color: var(--muted); }
+.ok { color: var(--good); }
+.bad { color: var(--bad); }
+
+section.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 0 0 1.25rem;
+  box-shadow: var(--shadow);
+}
+
+.controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: flex-end; }
+.field { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.field label { font: 600 0.78rem/1.3 ui-sans-serif, system-ui, sans-serif; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em; }
+select, input[type='file'], textarea, button {
+  font: 0.95rem/1.4 ui-sans-serif, system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+  /* A select sizes itself to its widest option, which is a documented cause of sideways
+     page scroll on a narrow screen. */
+  max-width: 100%;
+}
+textarea { width: 100%; min-height: 7rem; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+button {
+  cursor: pointer;
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+button.small { padding: 0.15rem 0.45rem; font-size: 0.82rem; font-weight: 500; }
+button:hover { background: var(--accent); color: var(--panel); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.prose {
+  white-space: pre-wrap;
+  font-size: 0.98rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  border-left: 3px solid var(--line);
+  padding-left: 0.9rem;
+}
+
+#board {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  padding: 0.5rem;
+  background: var(--bg);
+}
+#board svg { display: block; max-width: none; }
+.node rect, .node polygon, .node ellipse {
+  fill: var(--panel);
+  stroke: var(--accent);
+  stroke-width: 1.6;
+}
+.node ellipse.inner, .node line.inner { fill: none; stroke: var(--accent); stroke-width: 1.1; }
+.node:focus { outline: none; }
+.node:focus-visible rect, .node:focus-visible polygon, .node:focus-visible ellipse {
+  stroke-width: 3.4;
+}
+.node-label {
+  font: 12px ui-sans-serif, system-ui, sans-serif;
+  fill: var(--ink);
+  pointer-events: none;
+}
+.edge { stroke: var(--ink); stroke-width: 1.7; }
+.edge.kind-dotted { stroke-dasharray: 5 4; }
+.edge.kind-thick { stroke-width: 3.6; }
+.edges .head-arrow path, marker.head-arrow path { fill: var(--ink); }
+marker.head-circle circle { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+marker.head-cross path { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+.edge-label {
+  font: 11px ui-sans-serif, system-ui, sans-serif;
+  fill: var(--muted);
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+}
+
+ul.cards { list-style: none; padding: 0; margin: 0.5rem 0 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+ul.cards .card {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font: 0.85rem ui-sans-serif, system-ui, sans-serif;
+  background: var(--accent-soft);
+}
+ul.cards .card.done { background: transparent; color: var(--muted); }
+
+ul.placed { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+li.placement {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--line);
+}
+li.placement .relation { font-family: ui-monospace, monospace; font-size: 0.86rem; min-width: 0;
+  overflow-wrap: anywhere; }
+li.placement .actions { display: flex; gap: 0.35rem; flex: none; }
+
+dl.scoreboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.6rem;
+  margin: 0.75rem 0;
+}
+dl.scoreboard dt {
+  font: 600 0.75rem ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  /* A grid item defaults to min-width auto, which lets a long word push the row wider than
+     the page. */
+  min-width: 0;
+}
+dl.scoreboard dd { margin: 0; min-width: 0; }
+dl.scoreboard .num { font-size: 1.6rem; font-weight: 700; display: block; }
+dl.scoreboard .num.ok { color: var(--good); }
+dl.scoreboard .note { font-size: 0.78rem; color: var(--muted); }
+
+.verdict { font-size: 1.05rem; }
+.headline { border-left: 3px solid var(--accent); padding-left: 0.7rem; }
+.reversals {
+  border: 2px solid var(--accent);
+  border-radius: 5px;
+  padding: 0.75rem 0.9rem;
+  margin: 0.9rem 0;
+  background: var(--accent-soft);
+}
+.reversals h3 { margin-top: 0; }
+ul.findings { margin: 0.3rem 0 0; padding-left: 1.2rem; }
+ul.findings li { margin-bottom: 0.3rem; }
+
+ul.diagnostics { list-style: none; padding: 0; margin: 0.4rem 0 0; font-size: 0.88rem; }
+ul.diagnostics li { padding: 0.2rem 0; }
+.sev {
+  font: 600 0.7rem ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 0.3rem;
+}
+.sev-error .sev { color: var(--bad); border-color: var(--bad); }
+.sev-warning .sev { color: var(--accent); border-color: var(--accent); }
+
+pre {
+  overflow-x: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.7rem;
+  font-size: 0.82rem;
+  margin: 0;
+}
+details.method { margin-top: 1rem; font-size: 0.9rem; color: var(--muted); }
+details.method summary { cursor: pointer; font-weight: 600; color: var(--ink); }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+footer { color: var(--muted); font-size: 0.85rem; margin-top: 2rem; }
+footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap">
+    <h1>Diagram recall</h1>
+    <p class="lede">
+      Read an explanation with its diagram taken away, then rebuild the diagram from a shuffled
+      pile of pieces. The reconstruction is scored against the reference by graph edit distance,
+      and a relation you drew the wrong way round is reported as one mistake with a name, not as
+      a missing link plus a spare one.
+    </p>
+  </div>
+</header>
+
+<main class="wrap">
+  <p class="sr-only" id="live" role="status" aria-live="polite"></p>
+
+  <section class="panel">
+    <h2>The document</h2>
+    <div class="controls">
+      <div class="field">
+        <label for="sample">Built in example</label>
+        <select id="sample"></select>
+      </div>
+      <div class="field">
+        <label for="block-index">Which mermaid block</label>
+        <select id="block-index"></select>
+      </div>
+      <div class="field">
+        <label for="file">Or open a markdown file</label>
+        <input type="file" id="file" accept=".md,.markdown,.mmd,.mermaid,text/markdown,text/plain">
+      </div>
+      <div class="field">
+        <label for="theme">Theme</label>
+        <select id="theme">
+          <option value="system">Match the system</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+    </div>
+    <p class="muted" style="margin-top:0.75rem">
+      Loaded: <strong id="source-name">nothing yet</strong>. Any markdown file with a fenced
+      mermaid flowchart in it will do. Nothing leaves this page.
+    </p>
+    <details>
+      <summary>Paste markdown instead</summary>
+      <label class="sr-only" for="paste">Markdown to load</label>
+      <textarea id="paste" placeholder="# A heading&#10;&#10;Some prose.&#10;&#10;```mermaid&#10;graph TD&#10;  A --> B&#10;```"></textarea>
+      <button type="button" id="paste-load">Load the pasted markdown</button>
+    </details>
+    <div id="diagnostics"></div>
+  </section>
+
+  <section class="panel" id="problems" hidden></section>
+
+  <div id="drill" hidden>
+    <section class="panel">
+      <h2>Read this first</h2>
+      <div class="prose" id="prose"></div>
+    </section>
+
+    <section class="panel">
+      <h2>The pile</h2>
+      <div id="pile"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Place a relation</h2>
+      <p class="muted">
+        This form is the whole answer. Everything below it can be done from the keyboard alone.
+      </p>
+      <div class="controls">
+        <div class="field">
+          <label for="edge-from">From</label>
+          <select id="edge-from"></select>
+        </div>
+        <div class="field">
+          <label for="edge-card">Using the card</label>
+          <select id="edge-card"></select>
+        </div>
+        <div class="field">
+          <label for="edge-to">To</label>
+          <select id="edge-to"></select>
+        </div>
+        <button type="button" id="add-edge">Place it</button>
+      </div>
+      <h3>Placed so far</h3>
+      <ul class="placed" id="placements"></ul>
+      <div class="controls" style="margin-top:1rem">
+        <button type="button" id="check">Check my reconstruction</button>
+        <button type="button" id="reset">Clear everything</button>
+        <button type="button" id="reveal">Show the reference</button>
+      </div>
+    </section>
+
+    <section class="panel" id="result" hidden>
+      <h2>Result</h2>
+      <div id="result-body"></div>
+    </section>
+
+    <section class="panel" id="reference" hidden>
+      <h2>The reference</h2>
+      <pre id="reference-source"></pre>
+    </section>
+
+    <section class="panel">
+      <h2>The board</h2>
+      <p class="muted">
+        Drag a node, or focus one with Tab and move it with the arrow keys. Where a node sits is
+        not scored and cannot be: a graph has no canonical layout, so the same graph arranged
+        differently is the same graph.
+      </p>
+      <div id="board"></div>
+    </section>
+  </div>
+
+  <footer>
+    <p>
+      Distances use a unit cost model with an explicit edge reversal operation costing 1.
+      Textbook graph edit distance has no reversal operation and charges 2 for the same
+      mistake. When node identifiers are shared the correspondence is given and the distance is
+      exact in O(V + E log E). When they are not, an exact branch and bound runs up to 8 nodes
+      and the Riesen and Bunke bipartite heuristic runs above that, reported as an upper bound.
+      Above 64 nodes the tool refuses rather than running for an unbounded time.
+    </p>
+    <p>
+      Built for catalog task EDU-046.
+      <a href="https://github.com/JesseRWeigel/diagram-recall">Source</a>.
+    </p>
+  </footer>
+</main>
+
+<script type="module">
+/* ---- src/graph.js ---- */
+/**
+ * The graph model that the parser produces and the scorer consumes.
+ *
+ * Two decisions here shape everything downstream.
+ *
+ * 1. A graph has no coordinates. Nothing in this file, and nothing in `score.js`, can see
+ *    where a node was placed on screen. A learner who arranges the right graph upside down
+ *    has made no error, so there is nowhere for a layout to be recorded.
+ *
+ * 2. Direction is part of the structure, and decoration is not. `-->`, `--o` and `--x` are
+ *    all directed links, so they share a structural key and differ only in `head`. `---` is
+ *    an undirected link, so its structural key is order independent. Drawing an arrow where
+ *    the reference has a plain line is therefore a structural error, while drawing `--x`
+ *    where the reference has `-->` is a style error.
+ */
+
+// A separator that cannot occur in a mermaid node id. Written as an escape rather than as a
+// literal control byte: a source file containing a NUL is classified as binary by git and grep,
+// and a privacy scan then skips the whole file while reporting the same "clean" as a scan that
+// read it.
+const SEP = '\u001f';
+
+/** Line styles a link can be drawn in. */
+const EDGE_KINDS = ['solid', 'dotted', 'thick'];
+
+/** Link endings. Everything except `open` is directed. */
+const EDGE_HEADS = ['arrow', 'open', 'circle', 'cross'];
+
+const DEFAULT_SHAPE = 'rect';
+
+function createGraph(direction = 'TD') {
+  return {
+    direction,
+    nodes: new Map(),
+    edges: [],
+    subgraphs: new Map(),
+  };
+}
+
+function ensureNode(graph, id, line = null) {
+  let node = graph.nodes.get(id);
+  if (!node) {
+    node = { id, label: null, shape: null, subgraph: null, line };
+    graph.nodes.set(id, node);
+  }
+  return node;
+}
+
+/** A node with no bracketed caption displays its own id, so that is its label. */
+function nodeLabel(node) {
+  return node.label === null ? node.id : node.label;
+}
+
+function nodeShape(node) {
+  return node.shape === null ? DEFAULT_SHAPE : node.shape;
+}
+
+function isDirected(edge) {
+  return edge.head !== 'open';
+}
+
+/**
+ * The key two links must share to be "the same relation".
+ *
+ * `translate` maps a node id in this graph's namespace to the namespace the comparison happens
+ * in. The scorer passes the inverse of its node correspondence so that an attempt drawn with
+ * different node ids can still be compared edge for edge.
+ */
+function structuralKey(edge, translate = (id) => id) {
+  const from = translate(edge.from);
+  const to = translate(edge.to);
+  if (!isDirected(edge)) {
+    const [a, b] = from <= to ? [from, to] : [to, from];
+    return `undirected${SEP}${a}${SEP}${b}`;
+  }
+  return `directed${SEP}${from}${SEP}${to}`;
+}
+
+/** The key of the same relation drawn the other way round. Undirected keys are unchanged. */
+function reversedKey(key) {
+  const [kind, a, b] = key.split(SEP);
+  if (kind !== 'directed') return key;
+  return `directed${SEP}${b}${SEP}${a}`;
+}
+
+function undirectedFormOf(key) {
+  const [, a, b] = key.split(SEP);
+  const [x, y] = a <= b ? [a, b] : [b, a];
+  return `undirected${SEP}${x}${SEP}${y}`;
+}
+
+function parseKey(key) {
+  const [kind, a, b] = key.split(SEP);
+  return { directed: kind === 'directed', from: a, to: b };
+}
+
+/**
+ * The chain of subgraph titles a node sits inside, outermost first. Grouping is compared as a
+ * path so that moving a node from an inner subgraph to its parent is a single difference.
+ */
+function subgraphPath(graph, node) {
+  const path = [];
+  let current = node.subgraph;
+  const seen = new Set();
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const group = graph.subgraphs.get(current);
+    if (!group) break;
+    path.unshift(group.title === null ? group.id : group.title);
+    current = group.parent;
+  }
+  return path;
+}
+
+function degreeOf(graph, id) {
+  let degree = 0;
+  for (const edge of graph.edges) {
+    if (edge.from === id) degree += 1;
+    if (edge.to === id) degree += 1;
+  }
+  return degree;
+}
+
+/** A stable, position free, JSON friendly form. Used by fixtures and by the CLI's --json. */
+function graphToJSON(graph) {
+  return {
+    direction: graph.direction,
+    nodes: [...graph.nodes.values()]
+      .map((node) => ({
+        id: node.id,
+        label: nodeLabel(node),
+        shape: nodeShape(node),
+        subgraph: subgraphPath(graph, node).join('/') || null,
+      }))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+    edges: graph.edges
+      .map((edge) => ({
+        from: edge.from,
+        to: edge.to,
+        kind: edge.kind,
+        head: edge.head,
+        label: edge.label,
+      }))
+      .sort((a, b) => {
+        const left = `${a.from}${SEP}${a.to}${SEP}${a.label ?? ''}${SEP}${a.head}`;
+        const right = `${b.from}${SEP}${b.to}${SEP}${b.label ?? ''}${SEP}${b.head}`;
+        return left < right ? -1 : left > right ? 1 : 0;
+      }),
+    subgraphs: [...graph.subgraphs.values()]
+      .map((group) => ({
+        id: group.id,
+        title: group.title === null ? group.id : group.title,
+        parent: group.parent,
+      }))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+  };
+}
+
+/** Rebuild a graph object from the JSON form, so a saved attempt can be scored. */
+function graphFromJSON(data) {
+  const graph = createGraph(data.direction || 'TD');
+  for (const group of data.subgraphs || []) {
+    graph.subgraphs.set(group.id, {
+      id: group.id,
+      title: group.title ?? null,
+      parent: group.parent ?? null,
+    });
+  }
+  const groupByPath = new Map();
+  for (const group of graph.subgraphs.values()) {
+    const path = [];
+    let current = group;
+    const seen = new Set();
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      path.unshift(current.title === null ? current.id : current.title);
+      current = current.parent ? graph.subgraphs.get(current.parent) : null;
+    }
+    groupByPath.set(path.join('/'), group.id);
+  }
+  for (const node of data.nodes || []) {
+    const created = ensureNode(graph, node.id, node.line ?? null);
+    created.label = node.label ?? null;
+    created.shape = node.shape ?? null;
+    created.subgraph = node.subgraph ? groupByPath.get(node.subgraph) ?? null : null;
+  }
+  for (const edge of data.edges || []) {
+    ensureNode(graph, edge.from);
+    ensureNode(graph, edge.to);
+    graph.edges.push({
+      from: edge.from,
+      to: edge.to,
+      kind: edge.kind || 'solid',
+      head: edge.head || 'arrow',
+      label: edge.label ?? null,
+      line: edge.line ?? null,
+    });
+  }
+  return graph;
+}
+
+/* ---- src/hungarian.js ---- */
+/**
+ * The Hungarian (Kuhn and Munkres) algorithm for the linear sum assignment problem, in the
+ * O(n^3) shortest augmenting path form with dual potentials.
+ *
+ * This is used by one thing only: the bipartite approximation of graph edit distance in
+ * `score.js`. It solves the assignment problem exactly. The approximation is in what the cost
+ * matrix contains, not in how it is solved.
+ */
+
+/** A stand in for infinity that stays a finite number, so the potentials never become NaN. */
+const BLOCKED = 1e9;
+
+/**
+ * @param {number[][]} cost square matrix, cost[i][j] to assign row i to column j
+ * @returns {{assignment: number[], total: number}} assignment[i] is the column chosen for row i
+ */
+function hungarian(cost) {
+  const n = cost.length;
+  if (n === 0) return { assignment: [], total: 0 };
+  for (const row of cost) {
+    if (row.length !== n) throw new Error('hungarian() needs a square cost matrix');
+  }
+
+  // One based internal arrays, which is what makes the classic formulation readable.
+  const u = new Float64Array(n + 1);
+  const v = new Float64Array(n + 1);
+  const p = new Int32Array(n + 1).fill(0);
+  const way = new Int32Array(n + 1).fill(0);
+
+  for (let i = 1; i <= n; i += 1) {
+    p[0] = i;
+    let j0 = 0;
+    const minv = new Float64Array(n + 1).fill(Infinity);
+    const used = new Uint8Array(n + 1);
+    do {
+      used[j0] = 1;
+      const i0 = p[j0];
+      let delta = Infinity;
+      let j1 = 0;
+      for (let j = 1; j <= n; j += 1) {
+        if (used[j]) continue;
+        const current = cost[i0 - 1][j - 1] - u[i0] - v[j];
+        if (current < minv[j]) {
+          minv[j] = current;
+          way[j] = j0;
+        }
+        if (minv[j] < delta) {
+          delta = minv[j];
+          j1 = j;
+        }
+      }
+      for (let j = 0; j <= n; j += 1) {
+        if (used[j]) {
+          u[p[j]] += delta;
+          v[j] -= delta;
+        } else {
+          minv[j] -= delta;
+        }
+      }
+      j0 = j1;
+    } while (p[j0] !== 0);
+    do {
+      const j1 = way[j0];
+      p[j0] = p[j1];
+      j0 = j1;
+    } while (j0);
+  }
+
+  const assignment = new Array(n).fill(-1);
+  for (let j = 1; j <= n; j += 1) {
+    if (p[j] > 0) assignment[p[j] - 1] = j - 1;
+  }
+  let total = 0;
+  for (let i = 0; i < n; i += 1) total += cost[i][assignment[i]];
+  return { assignment, total };
+}
+
+/* ---- src/mermaid.js ---- */
+/**
+ * A mermaid flowchart parser that refuses to drop things quietly.
+ *
+ * The reason this file is careful is pedagogical rather than aesthetic. The reference graph is
+ * what a learner is marked against. A link this parser fails to read is a link the learner is
+ * penalised for drawing correctly. So every statement is either understood, or reported with
+ * its line number and its text. There is no third branch.
+ *
+ * Diagnostics come in three severities:
+ *
+ *   error   The statement could not be interpreted, so the graph is incomplete and unsafe to
+ *           score against. Callers refuse to build a drill from a block with any of these.
+ *   warning The statement was understood but something about it is likely to surprise, for
+ *           example a bidirectional link expanded into two directed links.
+ *   info    The statement was recognised and deliberately ignored because it is presentation
+ *           only, for example `style`, `classDef`, `click` and `linkStyle`. These cannot change
+ *           the graph, so ignoring them is safe, and they are still reported so that nothing
+ *           disappears without a trace.
+ */
+
+
+
+const ERROR = 'error';
+const WARNING = 'warning';
+const INFO = 'info';
+
+/**
+ * Opening and closing delimiters for every node shape, longest opening first.
+ *
+ * Two entries share the opening `[/` and two share `[\`. For those, the closing delimiter that
+ * actually turns up decides which shape it was, which is how mermaid itself distinguishes a
+ * parallelogram from a trapezoid.
+ */
+const SHAPES = [
+  { open: '(((', close: ')))', shape: 'double-circle' },
+  { open: '((', close: '))', shape: 'circle' },
+  { open: '([', close: '])', shape: 'stadium' },
+  { open: '[[', close: ']]', shape: 'subroutine' },
+  { open: '[(', close: ')]', shape: 'cylinder' },
+  { open: '[/', close: '/]', shape: 'parallelogram' },
+  { open: '[/', close: '\\]', shape: 'trapezoid' },
+  { open: '[\\', close: '\\]', shape: 'parallelogram-alt' },
+  { open: '[\\', close: '/]', shape: 'trapezoid-alt' },
+  { open: '{{', close: '}}', shape: 'hexagon' },
+  { open: '[', close: ']', shape: 'rect' },
+  { open: '(', close: ')', shape: 'round' },
+  { open: '{', close: '}', shape: 'diamond' },
+  { open: '>', close: ']', shape: 'asymmetric' },
+];
+
+/**
+ * A complete link operator with nothing between its halves.
+ *
+ * Ordered so that the dotted forms are tried before the solid ones, and so that a form with a
+ * head is tried before the bare open link of the same family. Note that the shortest solid open
+ * link is three dashes: a bare `--` is never a complete operator, which is exactly what makes
+ * the `-- text -->` form unambiguous.
+ */
+const PLAIN_OPERATOR = /^(-\.+-[>ox]?|-{2,}[>ox]|-{3,}|={2,}[>ox]|={3,})/;
+
+/** The opening half of a link that carries its label in the middle. */
+const MIDDLE_OPENERS = [
+  { open: '-.', kind: 'dotted', close: /\.-+[>ox]?/ },
+  { open: '==', kind: 'thick', close: /={2,}[>ox]?|=[>ox]/ },
+  { open: '--', kind: 'solid', close: /-{2,}[>ox]?|-[>ox]/ },
+];
+
+/** A node id: letters, digits and underscores, with dots and interior hyphens allowed. */
+const NODE_ID = /^[\p{L}\p{N}_](?:[\p{L}\p{N}_.]|-(?=[\p{L}\p{N}_]))*/u;
+
+/** Recognised and deliberately ignored. None of these can change the graph. */
+const PRESENTATION_KEYWORDS = new Set([
+  'style',
+  'classdef',
+  'class',
+  'click',
+  'linkstyle',
+  'direction',
+  'acctitle',
+  'accdescr',
+]);
+
+/** Diagram types that are not flowcharts. Naming them gives a better message than "unknown". */
+const OTHER_DIAGRAM_TYPES = [
+  'sequencediagram',
+  'classdiagram',
+  'statediagram',
+  'statediagram-v2',
+  'erdiagram',
+  'journey',
+  'gantt',
+  'pie',
+  'gitgraph',
+  'mindmap',
+  'timeline',
+  'quadrantchart',
+  'requirementdiagram',
+  'c4context',
+  'sankey-beta',
+  'xychart-beta',
+  'block-beta',
+  'packet-beta',
+  'architecture-beta',
+];
+
+const HEADER = /^(graph|flowchart|flowchart-elk)(?:\s+(TB|TD|BT|RL|LR))?$/i;
+
+class Diagnostics {
+  constructor() {
+    this.items = [];
+  }
+
+  add(severity, line, text, message) {
+    this.items.push({ severity, line, text: text.trim(), message });
+  }
+
+  get errors() {
+    return this.items.filter((item) => item.severity === ERROR);
+  }
+}
+
+/** Advance past a double quoted run starting at `i`, returning the index after it, or -1. */
+function skipQuoted(source, i) {
+  let j = i + 1;
+  while (j < source.length) {
+    if (source[j] === '\\') {
+      j += 2;
+      continue;
+    }
+    if (source[j] === '"') return j + 1;
+    j += 1;
+  }
+  return -1;
+}
+
+/** Index of the first occurrence of any of `needles` outside a quoted run, or -1. */
+function findOutsideQuotes(source, from, needles) {
+  let i = from;
+  while (i < source.length) {
+    if (source[i] === '"') {
+      const next = skipQuoted(source, i);
+      if (next < 0) return -1;
+      i = next;
+      continue;
+    }
+    for (const needle of needles) {
+      if (source.startsWith(needle, i)) return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+/** First match of `pattern` outside a quoted run, as `{index, match}`, or null. */
+function searchOutsideQuotes(source, from, pattern) {
+  let i = from;
+  const anchored = new RegExp(`^(?:${pattern.source})`, pattern.flags.replace('g', ''));
+  while (i < source.length) {
+    if (source[i] === '"') {
+      const next = skipQuoted(source, i);
+      if (next < 0) return null;
+      i = next;
+      continue;
+    }
+    const match = anchored.exec(source.slice(i));
+    if (match) return { index: i, match: match[0] };
+    i += 1;
+  }
+  return null;
+}
+
+function unquote(text) {
+  const trimmed = text.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replace(/\\"/g, '"');
+  }
+  return trimmed;
+}
+
+/** Collapse runs of whitespace so that a caption split over two lines compares equal. */
+function normaliseLabel(text) {
+  return unquote(text).replace(/\s+/g, ' ').trim();
+}
+
+/** Strip a `%%` comment that is not inside quotes. */
+function stripComment(line) {
+  const at = findOutsideQuotes(line, 0, ['%%']);
+  return at < 0 ? line : line.slice(0, at);
+}
+
+/**
+ * Split the block into statements. Mermaid separates them by newline or by a semicolon that is
+ * not inside quotes. Each statement carries the line it came from, because that is what a
+ * diagnostic has to point at.
+ */
+function splitStatements(source, startLine) {
+  const out = [];
+  const lines = source.split(/\r\n|\r|\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
+    const line = startLine + index;
+    if (/^\s*%%\{/.test(raw)) {
+      out.push({ text: raw.trim(), line, directive: true });
+      continue;
+    }
+    const body = stripComment(raw);
+    let buffer = '';
+    let i = 0;
+    while (i < body.length) {
+      if (body[i] === '"') {
+        const next = skipQuoted(body, i);
+        if (next < 0) {
+          buffer += body.slice(i);
+          i = body.length;
+          break;
+        }
+        buffer += body.slice(i, next);
+        i = next;
+        continue;
+      }
+      if (body[i] === ';') {
+        out.push({ text: buffer, line });
+        buffer = '';
+        i += 1;
+        continue;
+      }
+      buffer += body[i];
+      i += 1;
+    }
+    out.push({ text: buffer, line });
+  }
+  return out.filter((statement) => statement.text.trim() !== '');
+}
+
+class Cursor {
+  constructor(text) {
+    this.text = text;
+    this.i = 0;
+  }
+
+  get rest() {
+    return this.text.slice(this.i);
+  }
+
+  skipSpace() {
+    while (this.i < this.text.length && /\s/.test(this.text[this.i])) this.i += 1;
+  }
+
+  atEnd() {
+    this.skipSpace();
+    return this.i >= this.text.length;
+  }
+}
+
+class StatementError extends Error {}
+
+/** Read `A`, `A[Caption]`, `A{{Caption}}` and the rest of the shape table. */
+function readNodeSpec(cursor) {
+  cursor.skipSpace();
+  const idMatch = NODE_ID.exec(cursor.rest);
+  if (!idMatch) return null;
+  const id = idMatch[0];
+  cursor.i += id.length;
+
+  const candidates = SHAPES.filter((entry) => cursor.text.startsWith(entry.open, cursor.i));
+  if (candidates.length === 0) return { id, label: null, shape: null };
+
+  const openLength = Math.max(...candidates.map((entry) => entry.open.length));
+  const viable = candidates.filter((entry) => entry.open.length === openLength);
+  const textStart = cursor.i + openLength;
+  const found = findOutsideQuotes(
+    cursor.text,
+    textStart,
+    viable.map((entry) => entry.close),
+  );
+  if (found < 0) {
+    throw new StatementError(
+      `node "${id}" opens with "${viable[0].open}" and never closes with ` +
+        `"${viable.map((entry) => entry.close).join('" or "')}". If the caption contains a ` +
+        'delimiter character, wrap it in double quotes.',
+    );
+  }
+  const entry = viable.find((candidate) => cursor.text.startsWith(candidate.close, found));
+  const raw = cursor.text.slice(textStart, found);
+  cursor.i = found + entry.close.length;
+  return { id, label: normaliseLabel(raw), shape: entry.shape };
+}
+
+/** Read `A & B & C`, the set of nodes one side of a link applies to. */
+function readNodeGroup(cursor) {
+  const specs = [];
+  for (;;) {
+    const spec = readNodeSpec(cursor);
+    if (!spec) break;
+    specs.push(spec);
+    cursor.skipSpace();
+    if (cursor.text[cursor.i] === '&') {
+      cursor.i += 1;
+      continue;
+    }
+    break;
+  }
+  return specs.length ? specs : null;
+}
+
+function headFromCap(cap) {
+  if (cap === '>') return 'arrow';
+  if (cap === 'o') return 'circle';
+  if (cap === 'x') return 'cross';
+  return 'open';
+}
+
+function kindFromOperator(operator) {
+  if (operator.includes('.')) return 'dotted';
+  if (operator.includes('=')) return 'thick';
+  return 'solid';
+}
+
+/** Read `|label|` immediately after an operator, if present. */
+function readPipeLabel(cursor) {
+  cursor.skipSpace();
+  if (cursor.text[cursor.i] !== '|') return null;
+  const close = findOutsideQuotes(cursor.text, cursor.i + 1, ['|']);
+  if (close < 0) {
+    throw new StatementError(
+      'a link label opened with "|" and never closed. If the label contains a "|", ' +
+        'wrap the label in double quotes.',
+    );
+  }
+  const raw = cursor.text.slice(cursor.i + 1, close);
+  cursor.i = close + 1;
+  return normaliseLabel(raw);
+}
+
+/**
+ * Read one link operator, in any of the forms this parser supports.
+ *
+ * Returns `{kind, head, label, bidirectional}` or null when the cursor is not on an operator.
+ */
+function readOperator(cursor) {
+  cursor.skipSpace();
+  let bidirectional = false;
+  let tailCap = null;
+  if (cursor.text[cursor.i] === '<') {
+    bidirectional = true;
+    cursor.i += 1;
+  } else if (/[ox]/.test(cursor.text[cursor.i] || '') && /[-=]/.test(cursor.text[cursor.i + 1] || '')) {
+    tailCap = cursor.text[cursor.i];
+    bidirectional = true;
+    cursor.i += 1;
+  }
+
+  const plain = PLAIN_OPERATOR.exec(cursor.rest);
+  if (plain) {
+    const operator = plain[0];
+    cursor.i += operator.length;
+    const cap = /[>ox]$/.test(operator) ? operator[operator.length - 1] : '';
+    const head = headFromCap(cap);
+    if (bidirectional && head === 'open' && !tailCap) {
+      throw new StatementError(`"<${operator}" is not a link this parser understands.`);
+    }
+    return {
+      kind: kindFromOperator(operator),
+      head: bidirectional && !cap ? headFromCap(tailCap) : head,
+      label: readPipeLabel(cursor),
+      bidirectional,
+    };
+  }
+
+  for (const opener of MIDDLE_OPENERS) {
+    if (!cursor.text.startsWith(opener.open, cursor.i)) continue;
+    const textStart = cursor.i + opener.open.length;
+    const found = searchOutsideQuotes(cursor.text, textStart, opener.close);
+    if (!found) {
+      throw new StatementError(
+        `a link opened with "${opener.open}" and its closing half was never found. ` +
+          'Mermaid writes a mid-link label as `A -- text --> B`.',
+      );
+    }
+    const raw = cursor.text.slice(textStart, found.index);
+    if (raw.trim() === '') continue;
+    cursor.i = found.index + found.match.length;
+    const cap = /[>ox]$/.test(found.match) ? found.match[found.match.length - 1] : '';
+    return {
+      kind: opener.kind,
+      head: bidirectional && !cap ? headFromCap(tailCap) : headFromCap(cap),
+      label: normaliseLabel(raw),
+      bidirectional,
+    };
+  }
+
+  if (bidirectional) cursor.i -= 1;
+  return null;
+}
+
+/** True when the statement contains something that looks like a link, quotes excluded. */
+function looksLikeALink(text) {
+  return (
+    searchOutsideQuotes(text, 0, /-{2,}|-\.+-|={2,}|-\.\s|==\s/) !== null
+  );
+}
+
+function parseSubgraphHeader(text) {
+  const body = text.replace(/^subgraph\s*/i, '');
+  if (body.trim() === '') return { id: null, title: null };
+  const cursor = new Cursor(body);
+  if (body.trim().startsWith('"')) {
+    return { id: null, title: normaliseLabel(body) };
+  }
+  const spec = readNodeSpec(cursor);
+  if (!spec) return { id: null, title: normaliseLabel(body) };
+  if (cursor.atEnd()) {
+    return { id: spec.id, title: spec.label };
+  }
+  // `subgraph one [Title]` with a space before the bracket.
+  const rest = cursor.rest.trim();
+  const bracket = /^\[(.*)\]$/.exec(rest);
+  if (bracket) return { id: spec.id, title: normaliseLabel(bracket[1]) };
+  // Anything else after the first word means the whole line was a title with spaces in it,
+  // for example `subgraph Data ingestion`. Mermaid uses that text as both id and title.
+  return { id: null, title: normaliseLabel(body) };
+}
+
+/**
+ * Parse one mermaid flowchart block.
+ *
+ * `startLine` is the 1 based line number of the block's first line in the enclosing file, so
+ * that diagnostics point at the file rather than at the extracted fragment.
+ */
+function parseMermaid(source, { startLine = 1 } = {}) {
+  const diagnostics = new Diagnostics();
+  const statements = splitStatements(source, startLine);
+  const graph = createGraph('TD');
+
+  if (statements.length === 0) {
+    diagnostics.add(ERROR, startLine, '', 'the mermaid block is empty.');
+    return { graph, diagnostics: diagnostics.items };
+  }
+
+  const first = statements[0];
+  const header = HEADER.exec(first.text.trim());
+  if (!header) {
+    const word = (/^[\w-]+/.exec(first.text.trim()) || [''])[0].toLowerCase();
+    if (OTHER_DIAGRAM_TYPES.includes(word)) {
+      diagnostics.add(
+        ERROR,
+        first.line,
+        first.text,
+        `this is a "${word}", and only flowcharts are supported. A flowchart block starts ` +
+          'with `graph TD` or `flowchart LR`.',
+      );
+    } else {
+      diagnostics.add(
+        ERROR,
+        first.line,
+        first.text,
+        'the block does not start with `graph <dir>` or `flowchart <dir>`, so its diagram ' +
+          'type is unknown and nothing below can be read safely.',
+      );
+    }
+    return { graph, diagnostics: diagnostics.items };
+  }
+  graph.direction = (header[2] || 'TB').toUpperCase();
+  if (header[1].toLowerCase() === 'flowchart-elk') {
+    diagnostics.add(
+      INFO,
+      first.line,
+      first.text,
+      'flowchart-elk selects a different renderer and is read as a plain flowchart. ' +
+        'The graph is unaffected.',
+    );
+  }
+
+  const stack = [];
+  let anonymousSubgraphs = 0;
+
+  for (const statement of statements.slice(1)) {
+    const text = statement.text;
+    const trimmed = text.trim();
+
+    if (statement.directive) {
+      diagnostics.add(
+        INFO,
+        statement.line,
+        trimmed,
+        'an init directive sets renderer options and cannot change the graph, so it is ignored.',
+      );
+      continue;
+    }
+
+    if (/^end$/i.test(trimmed)) {
+      if (stack.length === 0) {
+        diagnostics.add(ERROR, statement.line, trimmed, '`end` with no open `subgraph`.');
+      } else {
+        stack.pop();
+      }
+      continue;
+    }
+
+    if (/^subgraph\b/i.test(trimmed)) {
+      let parsed;
+      try {
+        parsed = parseSubgraphHeader(trimmed);
+      } catch (error) {
+        diagnostics.add(ERROR, statement.line, trimmed, error.message);
+        continue;
+      }
+      anonymousSubgraphs += 1;
+      const id = parsed.id || `subgraph${anonymousSubgraphs}`;
+      graph.subgraphs.set(id, {
+        id,
+        title: parsed.title === null || parsed.title === '' ? null : parsed.title,
+        parent: stack.length ? stack[stack.length - 1] : null,
+      });
+      stack.push(id);
+      continue;
+    }
+
+    const keyword = (/^[A-Za-z_]+/.exec(trimmed) || [''])[0].toLowerCase();
+    if (PRESENTATION_KEYWORDS.has(keyword) && !looksLikeALink(trimmed)) {
+      diagnostics.add(
+        INFO,
+        statement.line,
+        trimmed,
+        `\`${keyword}\` is presentation only and cannot change the graph, so it is ignored.`,
+      );
+      continue;
+    }
+
+    try {
+      parseChain(text, statement.line, graph, stack, diagnostics);
+    } catch (error) {
+      if (!(error instanceof StatementError)) throw error;
+      diagnostics.add(ERROR, statement.line, trimmed, error.message);
+    }
+  }
+
+  if (stack.length) {
+    diagnostics.add(
+      ERROR,
+      startLine,
+      '',
+      `${stack.length} subgraph(s) opened and never closed with \`end\`: ${stack.join(', ')}.`,
+    );
+  }
+
+  return { graph, diagnostics: diagnostics.items };
+}
+
+function parseChain(text, line, graph, stack, diagnostics) {
+  const cursor = new Cursor(text);
+  const groups = [];
+  const operators = [];
+
+  const firstGroup = readNodeGroup(cursor);
+  if (!firstGroup) {
+    throw new StatementError(
+      'this statement is not a node declaration, a link, a subgraph or a known directive, ' +
+        'so the parser cannot tell what it declares. It is reported rather than dropped, ' +
+        'because a dropped statement would silently make the reference diagram wrong.',
+    );
+  }
+  groups.push(firstGroup);
+
+  while (!cursor.atEnd()) {
+    const before = cursor.i;
+    const operator = readOperator(cursor);
+    if (!operator) {
+      throw new StatementError(
+        `unexpected "${cursor.rest.trim()}" after a node. Supported links are \`-->\`, ` +
+          '`---`, `-.->`, `==>`, `--o`, `--x` and their labelled forms `-->|text|` and ' +
+          '`-- text -->`.',
+      );
+    }
+    if (cursor.i === before) throw new StatementError('the link operator made no progress.');
+    const group = readNodeGroup(cursor);
+    if (!group) {
+      throw new StatementError('a link has no node on its right hand side.');
+    }
+    operators.push(operator);
+    groups.push(group);
+  }
+
+  const subgraph = stack.length ? stack[stack.length - 1] : null;
+  for (const group of groups) {
+    for (const spec of group) {
+      const node = ensureNode(graph, spec.id, line);
+      if (spec.label !== null) node.label = spec.label;
+      if (spec.shape !== null) node.shape = spec.shape;
+      // A node belongs to the subgraph it is first written inside. Later mentions elsewhere
+      // do not move it, which is how mermaid itself behaves.
+      if (node.subgraph === null && subgraph !== null) node.subgraph = subgraph;
+    }
+  }
+
+  for (let index = 0; index < operators.length; index += 1) {
+    const operator = operators[index];
+    for (const from of groups[index]) {
+      for (const to of groups[index + 1]) {
+        graph.edges.push({
+          from: from.id,
+          to: to.id,
+          kind: operator.kind,
+          head: operator.head,
+          label: operator.label,
+          line,
+        });
+        if (operator.bidirectional) {
+          graph.edges.push({
+            from: to.id,
+            to: from.id,
+            kind: operator.kind,
+            head: operator.head,
+            label: operator.label,
+            line,
+          });
+          diagnostics.add(
+            WARNING,
+            line,
+            text.trim(),
+            `the bidirectional link between "${from.id}" and "${to.id}" is read as two ` +
+              'directed links, so a reconstruction has to place both.',
+          );
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Every fenced mermaid block in a markdown document, in order.
+ *
+ * Handles backtick and tilde fences of three characters or more, an info string with extra
+ * attributes, and indented fences inside list items. A fence closes on a run of the same
+ * character at least as long as the opening run.
+ */
+function extractMermaidBlocks(markdown) {
+  const lines = markdown.split(/\r\n|\r|\n/);
+  const blocks = [];
+  let open = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (open) {
+      const close = new RegExp(`^\\s{0,3}${open.char}{${open.length},}\\s*$`);
+      if (close.test(line)) {
+        blocks.push({
+          code: open.body.join('\n'),
+          startLine: open.startLine,
+          fenceLine: open.fenceLine,
+          info: open.info,
+        });
+        open = null;
+        continue;
+      }
+      open.body.push(line);
+      continue;
+    }
+    const fence = /^(\s{0,3})(`{3,}|~{3,})\s*([^\s`]*)(.*)$/.exec(line);
+    if (!fence) continue;
+    const info = fence[3].toLowerCase();
+    if (info !== 'mermaid') continue;
+    open = {
+      char: fence[2][0] === '`' ? '`' : '~',
+      length: fence[2].length,
+      body: [],
+      startLine: index + 2,
+      fenceLine: index + 1,
+      info: (fence[3] + fence[4]).trim(),
+    };
+  }
+  if (open) {
+    blocks.push({
+      code: open.body.join('\n'),
+      startLine: open.startLine,
+      fenceLine: open.fenceLine,
+      info: open.info,
+      unterminated: true,
+    });
+  }
+  return blocks;
+}
+
+/** Parse the nth mermaid block of a markdown document. */
+function parseMarkdown(markdown, { blockIndex = 0 } = {}) {
+  const blocks = extractMermaidBlocks(markdown);
+  if (blocks.length === 0) {
+    return {
+      graph: createGraph(),
+      diagnostics: [
+        {
+          severity: ERROR,
+          line: 1,
+          text: '',
+          message: 'no fenced ```mermaid block was found in this markdown file.',
+        },
+      ],
+      blocks,
+      block: null,
+    };
+  }
+  if (blockIndex < 0 || blockIndex >= blocks.length) {
+    return {
+      graph: createGraph(),
+      diagnostics: [
+        {
+          severity: ERROR,
+          line: 1,
+          text: '',
+          message: `block index ${blockIndex} was requested but the file has ${blocks.length}.`,
+        },
+      ],
+      blocks,
+      block: null,
+    };
+  }
+  const block = blocks[blockIndex];
+  const result = parseMermaid(block.code, { startLine: block.startLine });
+  if (block.unterminated) {
+    result.diagnostics.unshift({
+      severity: ERROR,
+      line: block.fenceLine,
+      text: '',
+      message: 'the mermaid fence opened here was never closed.',
+    });
+  }
+  return { ...result, blocks, block };
+}
+
+/* ---- src/score.js ---- */
+/**
+ * Scoring a reconstructed diagram against its reference.
+ *
+ * ## What is computed, and how exact it is
+ *
+ * The quantity is a graph edit distance under a unit cost model, with one addition to the
+ * textbook operation set that is explained below. Graph edit distance is NP-hard in general,
+ * because the node correspondence has to be searched. This module has three paths and it always
+ * says which one it took, in `result.algorithm`, `result.exact` and `result.bound`.
+ *
+ *   identity   Every node in the attempt carries an identifier that exists in the reference.
+ *              That is the situation the drill creates: the learner is handed the reference's
+ *              own node tokens and places them, so the correspondence is given rather than
+ *              inferred. No search happens. Exact, O(V + E log E).
+ *
+ *   exact      The identifiers differ, so the correspondence has to be found. A depth first
+ *              branch and bound assigns reference nodes to attempt nodes one at a time,
+ *              pruning any branch whose already committed cost has reached the best complete
+ *              answer so far. The bound is admissible because committed cost never decreases
+ *              as more nodes are decided. Exact, worst case O(n! * E), which is why it is
+ *              capped at LIMITS.exactNodes nodes and at LIMITS.expansionBudget expansions.
+ *
+ *   approx     Above that cap, the correspondence comes from the bipartite assignment
+ *              heuristic of Riesen and Bunke: build a cost matrix whose entries are node
+ *              substitution cost plus the cost of matching the two nodes' incident edge sets,
+ *              solve it exactly with the Hungarian algorithm in O(n^3), then measure the real
+ *              edit cost of the correspondence it returns. The result is a valid edit script,
+ *              so it is an UPPER BOUND on the true distance and never below it. It is reported
+ *              with `exact: false` and `bound: 'upper'`.
+ *
+ * Above LIMITS.approxNodes nodes the module throws GraphTooLarge rather than working for an
+ * unbounded time. Nothing here degrades quietly.
+ *
+ * ## The cost model
+ *
+ * Every difference costs 1 and is placed in exactly one of four buckets.
+ *
+ *   structure  Which nodes exist, which pairs are related, and which way each relation points.
+ *   label      The words on a node or on a link.
+ *   style      Node shape, link line style, and the decoration on a link head.
+ *   grouping   Which subgraph a node sits in.
+ *
+ * Structure and label are reported separately because they mean different things about what
+ * the learner understood. A reconstruction with the right shape and one link labelled wrongly
+ * has the model and has misremembered a word. A reconstruction with the wrong shape does not
+ * have the model. Adding those two numbers together would hide the distinction.
+ *
+ * ## The reversal operation
+ *
+ * Textbook graph edit distance has no operation for turning a link around, so `A --> B` drawn
+ * as `B --> A` costs 2 there: one deletion and one insertion. This module adds an explicit
+ * edge reversal primitive of cost 1, and reports it as one finding, because reversing a
+ * relation is a single misunderstanding and a learner told "one link is missing and one link
+ * is extra" has to work out for themselves that those are the same link. This is a deliberate
+ * departure from the standard cost model and it is the reason `algorithm` names the model.
+ */
+
+
+
+
+class GraphTooLarge extends Error {
+  constructor(size, limit) {
+    super(
+      `this graph has ${size} nodes and the node correspondence search is capped at ${limit}. ` +
+        'Graph edit distance is NP-hard when the correspondence is unknown, so the cap is ' +
+        'there instead of an unbounded run. Give the attempt the same node identifiers as ' +
+        'the reference and the correspondence is known, which removes the search entirely.',
+    );
+    this.name = 'GraphTooLarge';
+    this.size = size;
+    this.limit = limit;
+  }
+}
+
+const LIMITS = {
+  /** Above this, the exact correspondence search is not attempted. */
+  exactNodes: 8,
+  /** Above this, nothing is attempted and GraphTooLarge is thrown. */
+  approxNodes: 64,
+  /** Branch and bound gives up after this many node expansions and falls back to approx. */
+  expansionBudget: 300000,
+};
+
+const STRUCTURE_TYPES = new Set([
+  'node-missing',
+  'node-extra',
+  'edge-missing',
+  'edge-extra',
+  'edge-reversed',
+  'edge-direction',
+]);
+const LABEL_TYPES = new Set(['node-label', 'edge-label']);
+const STYLE_TYPES = new Set(['node-shape', 'edge-style', 'edge-head']);
+const GROUPING_TYPES = new Set(['node-grouping']);
+
+function bucketOf(type) {
+  if (STRUCTURE_TYPES.has(type)) return 'structure';
+  if (LABEL_TYPES.has(type)) return 'label';
+  if (STYLE_TYPES.has(type)) return 'style';
+  if (GROUPING_TYPES.has(type)) return 'grouping';
+  throw new Error(`unclassified finding type: ${type}`);
+}
+
+/** Group a graph's edges by the structural key they take in the reference's namespace. */
+function bucketEdges(graph, translate) {
+  const buckets = new Map();
+  for (const edge of graph.edges) {
+    const from = translate(edge.from);
+    const to = translate(edge.to);
+    if (from === null || to === null) continue;
+    const key = structuralKey(edge, translate);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(edge);
+  }
+  return buckets;
+}
+
+/** Edges that cannot even be placed, because one endpoint has no counterpart. */
+function orphanEdges(graph, translate) {
+  return graph.edges.filter(
+    (edge) => translate(edge.from) === null || translate(edge.to) === null,
+  );
+}
+
+function takeMatching(refEdges, attEdges) {
+  // Pair equal labels first so that a two link bundle between the same pair does not report
+  // both labels as wrong when only the pairing was arbitrary.
+  const pairs = [];
+  const remainingAtt = [...attEdges];
+  const remainingRef = [];
+  for (const refEdge of refEdges) {
+    const exact = remainingAtt.findIndex((candidate) => candidate.label === refEdge.label);
+    const index = exact >= 0 ? exact : remainingAtt.length ? 0 : -1;
+    if (index < 0) {
+      remainingRef.push(refEdge);
+      continue;
+    }
+    pairs.push([refEdge, remainingAtt[index]]);
+    remainingAtt.splice(index, 1);
+  }
+  return { pairs, remainingRef, remainingAtt };
+}
+
+function describeEdge(edge, label) {
+  return {
+    from: edge.from,
+    to: edge.to,
+    label: label === undefined ? edge.label : label,
+    kind: edge.kind,
+    head: edge.head,
+    line: edge.line ?? null,
+  };
+}
+
+/**
+ * The whole comparison, for one fixed node correspondence.
+ *
+ * `mapping` is a Map from reference node id to attempt node id. Reference nodes absent from it
+ * were deleted; attempt nodes that are not a value in it were inserted.
+ */
+function diffUnderMapping(reference, attempt, mapping) {
+  const findings = [];
+  const inverse = new Map();
+  for (const [refId, attId] of mapping) inverse.set(attId, refId);
+
+  for (const [refId, refNode] of reference.nodes) {
+    if (!mapping.has(refId)) {
+      findings.push({ type: 'node-missing', id: refId, label: nodeLabel(refNode) });
+    }
+  }
+  for (const [attId, attNode] of attempt.nodes) {
+    if (!inverse.has(attId)) {
+      findings.push({ type: 'node-extra', id: attId, label: nodeLabel(attNode) });
+    }
+  }
+
+  for (const [refId, attId] of mapping) {
+    const refNode = reference.nodes.get(refId);
+    const attNode = attempt.nodes.get(attId);
+    if (!refNode || !attNode) continue;
+    if (nodeLabel(refNode) !== nodeLabel(attNode)) {
+      findings.push({
+        type: 'node-label',
+        id: refId,
+        expected: nodeLabel(refNode),
+        actual: nodeLabel(attNode),
+      });
+    }
+    if (nodeShape(refNode) !== nodeShape(attNode)) {
+      findings.push({
+        type: 'node-shape',
+        id: refId,
+        expected: nodeShape(refNode),
+        actual: nodeShape(attNode),
+      });
+    }
+    const refGroup = subgraphPath(reference, refNode).join(' / ');
+    const attGroup = subgraphPath(attempt, attNode).join(' / ');
+    if (refGroup !== attGroup) {
+      findings.push({
+        type: 'node-grouping',
+        id: refId,
+        expected: refGroup || null,
+        actual: attGroup || null,
+      });
+    }
+  }
+
+  const identity = (id) => id;
+  const toReference = (id) => (inverse.has(id) ? inverse.get(id) : null);
+
+  const refBuckets = bucketEdges(reference, (id) => (mapping.has(id) ? id : null));
+  const attBuckets = bucketEdges(attempt, toReference);
+
+  for (const edge of orphanEdges(reference, (id) => (mapping.has(id) ? id : null))) {
+    findings.push({ type: 'edge-missing', ...describeEdge(edge), reason: 'endpoint-missing' });
+  }
+  for (const edge of orphanEdges(attempt, toReference)) {
+    findings.push({ type: 'edge-extra', ...describeEdge(edge), reason: 'endpoint-extra' });
+  }
+
+  const leftoverRef = new Map();
+  const leftoverAtt = new Map(attBuckets);
+
+  // Pass 1: same nodes, same direction. These are correct relations, and only their words and
+  // decoration can be wrong.
+  for (const [key, refEdges] of refBuckets) {
+    const attEdges = leftoverAtt.get(key) || [];
+    const { pairs, remainingRef, remainingAtt } = takeMatching(refEdges, attEdges);
+    for (const [refEdge, attEdge] of pairs) {
+      compareEdgeAttributes(refEdge, attEdge, findings, identity);
+    }
+    if (remainingAtt.length) leftoverAtt.set(key, remainingAtt);
+    else leftoverAtt.delete(key);
+    if (remainingRef.length) leftoverRef.set(key, remainingRef);
+  }
+
+  // Pass 2: reversals. A reference link survives to here only if the attempt had no link
+  // between the same pair in the same direction, and the reversed attempt link survives only
+  // if the reference had none in that direction either. Those two conditions together are what
+  // makes this one mistake rather than two.
+  for (const [key, refEdges] of [...leftoverRef]) {
+    const { directed } = parseKey(key);
+    if (!directed) continue;
+    const mirror = reversedKey(key);
+    const attEdges = leftoverAtt.get(mirror);
+    if (!attEdges || attEdges.length === 0) continue;
+    const { pairs, remainingRef, remainingAtt } = takeMatching(refEdges, attEdges);
+    for (const [refEdge, attEdge] of pairs) {
+      findings.push({
+        type: 'edge-reversed',
+        from: refEdge.from,
+        to: refEdge.to,
+        label: refEdge.label,
+        drawnFrom: attEdge.from,
+        drawnTo: attEdge.to,
+      });
+      compareEdgeAttributes(refEdge, attEdge, findings, identity);
+    }
+    if (remainingAtt.length) leftoverAtt.set(mirror, remainingAtt);
+    else leftoverAtt.delete(mirror);
+    if (remainingRef.length) leftoverRef.set(key, remainingRef);
+    else leftoverRef.delete(key);
+  }
+
+  // Pass 3: right pair, wrong directedness. An arrow where the reference has a plain line, or
+  // the other way round.
+  for (const [key, refEdges] of [...leftoverRef]) {
+    const partner = parseKey(key).directed
+      ? undirectedFormOf(key)
+      : null;
+    const candidates = [];
+    if (partner) {
+      candidates.push(partner);
+    } else {
+      const { from, to } = parseKey(key);
+      candidates.push(`directed${SEP}${from}${SEP}${to}`, `directed${SEP}${to}${SEP}${from}`);
+    }
+    for (const candidate of candidates) {
+      const attEdges = leftoverAtt.get(candidate);
+      if (!attEdges || attEdges.length === 0) continue;
+      const refRemaining = leftoverRef.get(key) || [];
+      if (refRemaining.length === 0) break;
+      const { pairs, remainingRef, remainingAtt } = takeMatching(refRemaining, attEdges);
+      for (const [refEdge, attEdge] of pairs) {
+        findings.push({
+          type: 'edge-direction',
+          from: refEdge.from,
+          to: refEdge.to,
+          label: refEdge.label,
+          expectedDirected: isDirected(refEdge),
+          actualDirected: isDirected(attEdge),
+        });
+        compareEdgeAttributes(refEdge, attEdge, findings, identity, { skipHead: true });
+      }
+      if (remainingAtt.length) leftoverAtt.set(candidate, remainingAtt);
+      else leftoverAtt.delete(candidate);
+      if (remainingRef.length) leftoverRef.set(key, remainingRef);
+      else leftoverRef.delete(key);
+    }
+  }
+
+  for (const refEdges of leftoverRef.values()) {
+    for (const edge of refEdges) {
+      findings.push({ type: 'edge-missing', ...describeEdge(edge) });
+    }
+  }
+  for (const attEdges of leftoverAtt.values()) {
+    for (const edge of attEdges) {
+      findings.push({ type: 'edge-extra', ...describeEdge(edge) });
+    }
+  }
+
+  return findings;
+}
+
+function compareEdgeAttributes(refEdge, attEdge, findings, translate, options = {}) {
+  if ((refEdge.label ?? null) !== (attEdge.label ?? null)) {
+    findings.push({
+      type: 'edge-label',
+      from: refEdge.from,
+      to: refEdge.to,
+      expected: refEdge.label,
+      actual: attEdge.label,
+    });
+  }
+  if (refEdge.kind !== attEdge.kind) {
+    findings.push({
+      type: 'edge-style',
+      from: refEdge.from,
+      to: refEdge.to,
+      expected: refEdge.kind,
+      actual: attEdge.kind,
+    });
+  }
+  if (!options.skipHead && refEdge.head !== attEdge.head) {
+    findings.push({
+      type: 'edge-head',
+      from: refEdge.from,
+      to: refEdge.to,
+      expected: refEdge.head,
+      actual: attEdge.head,
+    });
+  }
+}
+
+function tallyFindings(findings) {
+  const totals = { structure: 0, label: 0, style: 0, grouping: 0, total: 0 };
+  for (const finding of findings) {
+    totals[bucketOf(finding.type)] += 1;
+    totals.total += 1;
+  }
+  return totals;
+}
+
+function identityMapping(reference, attempt) {
+  const mapping = new Map();
+  for (const id of reference.nodes.keys()) {
+    if (attempt.nodes.has(id)) mapping.set(id, id);
+  }
+  return mapping;
+}
+
+/** True when every node the attempt uses is a node the reference already had. */
+function sharesNodeIdentifiers(reference, attempt) {
+  for (const id of attempt.nodes.keys()) {
+    if (!reference.nodes.has(id)) return false;
+  }
+  return true;
+}
+
+/**
+ * Cost of the part of the correspondence that is already decided.
+ *
+ * Only reference nodes 0..depth-1 have been assigned. Edges are counted when both of their
+ * endpoints are decided, so the value never decreases as depth grows, which is what makes it a
+ * usable bound.
+ */
+function committedCost(reference, attempt, refIds, attIds, assign, depth) {
+  const mapping = new Map();
+  for (let i = 0; i < depth; i += 1) {
+    if (assign[i] >= 0) mapping.set(refIds[i], attIds[assign[i]]);
+  }
+  const decidedRef = new Set(refIds.slice(0, depth));
+  const decidedAtt = new Set();
+  for (const attId of mapping.values()) decidedAtt.add(attId);
+
+  const partialRef = restrictGraph(reference, decidedRef);
+  const partialAtt = restrictGraph(attempt, decidedAtt);
+  // The deletion of an undecided reference node is already counted here, because decidedRef
+  // holds it while the mapping does not, which diffUnderMapping reports as node-missing.
+  // Attempt nodes not yet chosen are left out of partialAtt entirely, since a later depth may
+  // still match them, and counting them now would break the bound's admissibility.
+  return tallyFindings(diffUnderMapping(partialRef, partialAtt, mapping)).total;
+}
+
+function restrictGraph(graph, keep) {
+  return {
+    direction: graph.direction,
+    nodes: new Map([...graph.nodes].filter(([id]) => keep.has(id))),
+    edges: graph.edges.filter((edge) => keep.has(edge.from) && keep.has(edge.to)),
+    subgraphs: graph.subgraphs,
+  };
+}
+
+function exactSearch(reference, attempt, budget) {
+  const refIds = [...reference.nodes.keys()];
+  const attIds = [...attempt.nodes.keys()];
+  const assign = new Array(refIds.length).fill(-1);
+  let best = Infinity;
+  let bestMapping = null;
+  let expansions = 0;
+  let exhausted = false;
+
+  const used = new Array(attIds.length).fill(false);
+
+  function recurse(depth) {
+    if (exhausted) return;
+    expansions += 1;
+    if (expansions > budget) {
+      exhausted = true;
+      return;
+    }
+    const committed = committedCost(reference, attempt, refIds, attIds, assign, depth);
+    if (committed >= best) return;
+    if (depth === refIds.length) {
+      const mapping = new Map();
+      for (let i = 0; i < refIds.length; i += 1) {
+        if (assign[i] >= 0) mapping.set(refIds[i], attIds[assign[i]]);
+      }
+      const cost = tallyFindings(diffUnderMapping(reference, attempt, mapping)).total;
+      if (cost < best) {
+        best = cost;
+        bestMapping = mapping;
+      }
+      return;
+    }
+    for (let j = 0; j < attIds.length; j += 1) {
+      if (used[j]) continue;
+      used[j] = true;
+      assign[depth] = j;
+      recurse(depth + 1);
+      used[j] = false;
+      if (exhausted) return;
+    }
+    assign[depth] = -1;
+    recurse(depth + 1);
+  }
+
+  recurse(0);
+  return { mapping: bestMapping, exhausted, expansions };
+}
+
+/** Descriptors of the links touching one node, used by the bipartite approximation. */
+function starOf(graph, id) {
+  const descriptors = [];
+  for (const edge of graph.edges) {
+    if (edge.from === id) descriptors.push(isDirected(edge) ? 'out' : 'und');
+    if (edge.to === id) descriptors.push(isDirected(edge) ? 'in' : 'und');
+  }
+  return descriptors.sort();
+}
+
+function multisetOverlap(left, right) {
+  const counts = new Map();
+  for (const item of left) counts.set(item, (counts.get(item) || 0) + 1);
+  let overlap = 0;
+  for (const item of right) {
+    const available = counts.get(item) || 0;
+    if (available > 0) {
+      counts.set(item, available - 1);
+      overlap += 1;
+    }
+  }
+  return overlap;
+}
+
+function approximateMapping(reference, attempt) {
+  const refIds = [...reference.nodes.keys()];
+  const attIds = [...attempt.nodes.keys()];
+  const n = refIds.length;
+  const m = attIds.length;
+  const size = n + m;
+  const refStars = refIds.map((id) => starOf(reference, id));
+  const attStars = attIds.map((id) => starOf(attempt, id));
+
+  const cost = Array.from({ length: size }, () => new Array(size).fill(BLOCKED));
+  for (let i = 0; i < n; i += 1) {
+    const refNode = reference.nodes.get(refIds[i]);
+    for (let j = 0; j < m; j += 1) {
+      const attNode = attempt.nodes.get(attIds[j]);
+      let value = 0;
+      if (nodeLabel(refNode) !== nodeLabel(attNode)) value += 1;
+      if (nodeShape(refNode) !== nodeShape(attNode)) value += 1;
+      const overlap = multisetOverlap(refStars[i], attStars[j]);
+      value += Math.max(refStars[i].length, attStars[j].length) - overlap;
+      cost[i][j] = value;
+    }
+    cost[i][m + i] = 1 + refStars[i].length;
+  }
+  for (let j = 0; j < m; j += 1) {
+    cost[n + j][j] = 1 + attStars[j].length;
+    for (let i = 0; i < n; i += 1) cost[n + j][m + i] = 0;
+  }
+  for (let i = n; i < size; i += 1) {
+    for (let j = m; j < size; j += 1) {
+      if (cost[i][j] === BLOCKED) cost[i][j] = 0;
+    }
+  }
+
+  const { assignment } = hungarian(cost);
+  const mapping = new Map();
+  for (let i = 0; i < n; i += 1) {
+    const j = assignment[i];
+    if (j < m) mapping.set(refIds[i], attIds[j]);
+  }
+  return mapping;
+}
+
+/**
+ * Score an attempt against a reference.
+ *
+ * @param {object} reference parsed reference graph
+ * @param {object} attempt parsed reconstruction
+ * @param {object} [options]
+ * @param {'auto'|'identity'|'exact'|'approx'} [options.mapping]
+ */
+function score(reference, attempt, options = {}) {
+  const requested = options.mapping || 'auto';
+  const limits = { ...LIMITS, ...(options.limits || {}) };
+  const size = Math.max(reference.nodes.size, attempt.nodes.size);
+
+  let mode = requested;
+  if (mode === 'auto') {
+    mode = sharesNodeIdentifiers(reference, attempt) ? 'identity' : 'search';
+  }
+
+  if (mode === 'search') {
+    if (size > limits.approxNodes) throw new GraphTooLarge(size, limits.approxNodes);
+    mode = size <= limits.exactNodes ? 'exact' : 'approx';
+  }
+  if ((mode === 'exact' || mode === 'approx') && size > limits.approxNodes) {
+    throw new GraphTooLarge(size, limits.approxNodes);
+  }
+
+  let mapping;
+  let exact = true;
+  let bound = 'exact';
+  let algorithm;
+  let complexity;
+  let note = null;
+
+  if (mode === 'identity') {
+    mapping = identityMapping(reference, attempt);
+    algorithm =
+      'identity correspondence, unit cost edit distance with an explicit edge reversal ' +
+      'primitive';
+    complexity = 'O(V + E log E)';
+    if (!sharesNodeIdentifiers(reference, attempt)) {
+      note =
+        'the identity correspondence was requested, and the attempt uses node identifiers ' +
+        'the reference does not have. Those nodes count as insertions rather than being ' +
+        'matched to anything.';
+    }
+  } else if (mode === 'exact') {
+    if (size > limits.exactNodes) {
+      throw new GraphTooLarge(size, limits.exactNodes);
+    }
+    const search = exactSearch(reference, attempt, limits.expansionBudget);
+    if (search.exhausted || !search.mapping) {
+      mapping = approximateMapping(reference, attempt);
+      exact = false;
+      bound = 'upper';
+      algorithm =
+        'bipartite assignment heuristic of Riesen and Bunke, solved with the Hungarian ' +
+        'algorithm, after the exact search exhausted its budget';
+      complexity = 'O(n^3)';
+      note = `the exact branch and bound gave up after ${limits.expansionBudget} expansions.`;
+    } else {
+      mapping = search.mapping;
+      algorithm =
+        'exact branch and bound over node correspondences, unit cost edit distance with an ' +
+        'explicit edge reversal primitive';
+      complexity = `O(n! * E) worst case, ${search.expansions} expansions here`;
+    }
+  } else {
+    mapping = approximateMapping(reference, attempt);
+    exact = false;
+    bound = 'upper';
+    algorithm =
+      'bipartite assignment heuristic of Riesen and Bunke, solved with the Hungarian algorithm';
+    complexity = 'O(n^3)';
+    note =
+      `the graph has ${size} nodes, above the exact cap of ${limits.exactNodes}. The number ` +
+      'reported is the cost of a real edit script, so it is an upper bound on the true ' +
+      'distance and may be larger than it.';
+  }
+
+  const findings = diffUnderMapping(reference, attempt, mapping);
+  const totals = tallyFindings(findings);
+  const matchedAttempt = new Set(mapping.values());
+
+  return {
+    mode,
+    exact,
+    bound,
+    algorithm,
+    complexity,
+    note,
+    costModel: {
+      unit: 1,
+      buckets: ['structure', 'label', 'style', 'grouping'],
+      reversalCost: 1,
+      textbookReversalCost: 2,
+    },
+    mapping: {
+      pairs: [...mapping].map(([refId, attId]) => [refId, attId]),
+      unmatchedReference: [...reference.nodes.keys()].filter((id) => !mapping.has(id)),
+      unmatchedAttempt: [...attempt.nodes.keys()].filter((id) => !matchedAttempt.has(id)),
+    },
+    totals,
+    findings,
+    perfect: totals.total === 0,
+  };
+}
+
+/* ---- src/report.js ---- */
+/**
+ * Turning a score into sentences a learner can act on.
+ *
+ * The rule this module follows: name the relation, not the edit. "One edge deleted and one
+ * edge inserted" is arithmetic. "You got this relation backwards" is feedback.
+ */
+
+
+
+const SHAPE_NAMES = {
+  rect: 'rectangle',
+  round: 'rounded rectangle',
+  stadium: 'stadium',
+  subroutine: 'subroutine box',
+  cylinder: 'cylinder',
+  circle: 'circle',
+  'double-circle': 'double circle',
+  asymmetric: 'flag',
+  diamond: 'diamond',
+  hexagon: 'hexagon',
+  parallelogram: 'parallelogram',
+  'parallelogram-alt': 'parallelogram',
+  trapezoid: 'trapezoid',
+  'trapezoid-alt': 'trapezoid',
+};
+
+const KIND_NAMES = { solid: 'solid', dotted: 'dotted', thick: 'thick' };
+const HEAD_NAMES = { arrow: 'arrow', open: 'plain line', circle: 'circle end', cross: 'cross end' };
+
+function caption(graph, id) {
+  const node = graph.nodes.get(id);
+  if (!node) return id;
+  const text = nodeLabel(node);
+  return text === id ? id : `${text} (${id})`;
+}
+
+/** One sentence per finding, in the reference's own vocabulary. */
+function describeFinding(finding, reference, attempt) {
+  const ref = (id) => caption(reference, id);
+  const att = (id) => caption(attempt, id);
+  switch (finding.type) {
+    case 'node-missing':
+      return `The node ${ref(finding.id)} is not in your reconstruction.`;
+    case 'node-extra':
+      return `You added ${att(finding.id)}, which the reference does not have.`;
+    case 'edge-reversed':
+      return (
+        `You got this relation backwards: the reference has ` +
+        `${ref(finding.from)} --> ${ref(finding.to)}` +
+        (finding.label ? ` labelled "${finding.label}"` : '') +
+        `, and you drew ${ref(finding.to)} --> ${ref(finding.from)}. ` +
+        'That is one mistake about which way the relation runs, not a missing link plus a ' +
+        'spare one.'
+      );
+    case 'edge-direction':
+      return finding.expectedDirected
+        ? `${ref(finding.from)} and ${ref(finding.to)} are connected in both, but the ` +
+            `reference points an arrow from ${ref(finding.from)} to ${ref(finding.to)} and ` +
+            'you drew a plain line, which claims no direction.'
+        : `${ref(finding.from)} and ${ref(finding.to)} are joined by a plain undirected ` +
+            'line in the reference, and you drew a directed arrow.';
+    case 'edge-missing':
+      return (
+        `The reference relates ${ref(finding.from)} to ${ref(finding.to)}` +
+        (finding.label ? ` with the label "${finding.label}"` : '') +
+        ', and your reconstruction has nothing between them' +
+        (finding.reason === 'endpoint-missing'
+          ? ', because one of the two nodes is missing.'
+          : '.')
+      );
+    case 'edge-extra':
+      return (
+        `You related ${att(finding.from)} to ${att(finding.to)}` +
+        (finding.label ? ` with the label "${finding.label}"` : '') +
+        ', and the reference has no such relation' +
+        (finding.reason === 'endpoint-extra' ? ', because one of the two nodes is extra.' : '.')
+      );
+    case 'node-label':
+      return (
+        `The node ${finding.id} should read "${finding.expected}" and yours reads ` +
+        `"${finding.actual}". The shape of the diagram is unaffected.`
+      );
+    case 'edge-label':
+      return (
+        `The relation ${ref(finding.from)} --> ${ref(finding.to)} points the right way. Its ` +
+        `label should be ${finding.expected === null ? 'blank' : `"${finding.expected}"`} and ` +
+        `yours is ${finding.actual === null ? 'blank' : `"${finding.actual}"`}.`
+      );
+    case 'node-shape':
+      return (
+        `${ref(finding.id)} is drawn as a ${SHAPE_NAMES[finding.expected] || finding.expected} ` +
+        `in the reference and as a ${SHAPE_NAMES[finding.actual] || finding.actual} in yours.`
+      );
+    case 'edge-style':
+      return (
+        `The relation ${ref(finding.from)} --> ${ref(finding.to)} is a ` +
+        `${KIND_NAMES[finding.expected] || finding.expected} line in the reference and a ` +
+        `${KIND_NAMES[finding.actual] || finding.actual} one in yours.`
+      );
+    case 'edge-head':
+      return (
+        `The relation ${ref(finding.from)} --> ${ref(finding.to)} ends in a ` +
+        `${HEAD_NAMES[finding.expected] || finding.expected} in the reference and a ` +
+        `${HEAD_NAMES[finding.actual] || finding.actual} in yours.`
+      );
+    case 'node-grouping':
+      return (
+        `${ref(finding.id)} belongs in ` +
+        `${finding.expected ? `"${finding.expected}"` : 'no subgraph'} and you put it in ` +
+        `${finding.actual ? `"${finding.actual}"` : 'no subgraph'}.`
+      );
+    default:
+      throw new Error(`no wording for finding type ${finding.type}`);
+  }
+}
+
+function plural(count, singular, pluralForm) {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+/** The two headline sentences: how the shape did, and how the wording did. */
+function headlines(result) {
+  const { totals, findings } = result;
+  const reversals = findings.filter((finding) => finding.type === 'edge-reversed').length;
+  const lines = [];
+
+  if (totals.structure === 0) {
+    lines.push('Structure: correct. Every node is present and every relation runs the way it does in the reference.');
+  } else {
+    const parts = [];
+    if (reversals) parts.push(plural(reversals, 'reversed relation', 'reversed relations'));
+    const missing = findings.filter((f) => f.type === 'edge-missing').length;
+    const extra = findings.filter((f) => f.type === 'edge-extra').length;
+    const nodeMissing = findings.filter((f) => f.type === 'node-missing').length;
+    const nodeExtra = findings.filter((f) => f.type === 'node-extra').length;
+    const direction = findings.filter((f) => f.type === 'edge-direction').length;
+    if (missing) parts.push(plural(missing, 'missing relation', 'missing relations'));
+    if (extra) parts.push(plural(extra, 'relation too many', 'relations too many'));
+    if (nodeMissing) parts.push(plural(nodeMissing, 'missing node', 'missing nodes'));
+    if (nodeExtra) parts.push(plural(nodeExtra, 'node too many', 'nodes too many'));
+    if (direction) parts.push(plural(direction, 'directedness mismatch', 'directedness mismatches'));
+    lines.push(
+      `Structure: ${plural(totals.structure, 'edit', 'edits')} away (${parts.join(', ')}).`,
+    );
+  }
+
+  if (totals.label === 0) {
+    lines.push('Labels: correct.');
+  } else {
+    lines.push(
+      `Labels: ${plural(totals.label, 'wording difference', 'wording differences')}. ` +
+        'Wording is scored apart from structure, because a diagram with the right shape and ' +
+        'one word wrong is a different result from one with the wrong shape.',
+    );
+  }
+
+  if (totals.style) {
+    lines.push(
+      `Style: ${plural(totals.style, 'difference', 'differences')} in node shape or line ` +
+        'style. These do not change what the diagram claims.',
+    );
+  }
+  if (totals.grouping) {
+    lines.push(`Grouping: ${plural(totals.grouping, 'node', 'nodes')} in the wrong subgraph.`);
+  }
+  return lines;
+}
+
+/** The full plain text report, as the CLI prints it. */
+function renderReport(result, reference, attempt) {
+  const lines = [];
+  lines.push(`algorithm  ${result.algorithm}`);
+  lines.push(`complexity ${result.complexity}`);
+  lines.push(
+    `result     ${result.exact ? 'exact' : 'APPROXIMATE, upper bound'}` +
+      (result.exact ? '' : ' (the true distance may be lower)'),
+  );
+  if (result.note) lines.push(`note       ${result.note}`);
+  lines.push('');
+  lines.push(
+    'Node positions are not scored. A graph has no canonical layout, so arranging the right ' +
+      'graph differently is not an error.',
+  );
+  lines.push('');
+  if (result.perfect) {
+    lines.push('Distance 0. The reconstruction matches the reference exactly.');
+    return lines.join('\n');
+  }
+  for (const line of headlines(result)) lines.push(line);
+  lines.push('');
+  lines.push(
+    `total distance ${result.totals.total} = ${result.totals.structure} structure + ` +
+      `${result.totals.label} label + ${result.totals.style} style + ` +
+      `${result.totals.grouping} grouping`,
+  );
+  lines.push('');
+  const order = [
+    'edge-reversed',
+    'edge-direction',
+    'edge-missing',
+    'edge-extra',
+    'node-missing',
+    'node-extra',
+    'edge-label',
+    'node-label',
+    'node-shape',
+    'edge-style',
+    'edge-head',
+    'node-grouping',
+  ];
+  const sorted = [...result.findings].sort(
+    (a, b) => order.indexOf(a.type) - order.indexOf(b.type),
+  );
+  for (const finding of sorted) {
+    lines.push(`  - ${describeFinding(finding, reference, attempt)}`);
+  }
+  return lines.join('\n');
+}
+
+/* ---- src/drill.js ---- */
+/**
+ * Turning a markdown explanation into a retrieval practice drill.
+ *
+ * The learner reads the prose with the diagram removed, then rebuilds the diagram from a pile
+ * of pieces. The pile deliberately withholds exactly the thing being practised:
+ *
+ *   node cards      carry the caption and the shape, because remembering that a box was a
+ *                   diamond is not the skill under test.
+ *   relation cards  carry the label and the line style, and NOT the two endpoints and NOT the
+ *                   direction. Placing each relation and choosing which way it runs is the
+ *                   whole exercise.
+ *
+ * The shuffle is seeded so that a drill is reproducible, which is what lets a fixture assert
+ * on one.
+ */
+
+
+
+
+/** mulberry32. Small, fast, and identical in every JavaScript engine. */
+function seededRandom(seed) {
+  let state = seed >>> 0;
+  return function next() {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffle(items, random) {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/** Replace the chosen mermaid block with a placeholder so the prose can be shown on its own. */
+function proseWithout(markdown, blockIndex) {
+  const blocks = extractMermaidBlocks(markdown);
+  if (blockIndex < 0 || blockIndex >= blocks.length) return markdown;
+  const block = blocks[blockIndex];
+  const lines = markdown.split(/\r\n|\r|\n/);
+  const first = block.fenceLine - 1;
+  let last = first;
+  while (last < lines.length) {
+    if (last > first && /^\s{0,3}(`{3,}|~{3,})\s*$/.test(lines[last])) break;
+    last += 1;
+  }
+  const kept = [
+    ...lines.slice(0, first),
+    '> The diagram that was here is what you are about to rebuild.',
+    ...lines.slice(Math.min(last + 1, lines.length)),
+  ];
+  return kept.join('\n');
+}
+
+class DrillError extends Error {}
+
+/**
+ * @param {string} markdown any markdown document containing a fenced ```mermaid block
+ * @param {object} [options]
+ * @param {number} [options.blockIndex] which block, when the file has several
+ * @param {number} [options.seed] shuffle seed
+ * @param {boolean} [options.allowErrors] build anyway despite error diagnostics
+ */
+function buildDrill(markdown, options = {}) {
+  const blockIndex = options.blockIndex ?? 0;
+  const seed = options.seed ?? 1;
+  const parsed = parseMarkdown(markdown, { blockIndex });
+  const errors = parsed.diagnostics.filter((item) => item.severity === ERROR);
+  if (errors.length && !options.allowErrors) {
+    throw new DrillError(
+      'refusing to build a drill from a diagram this parser could not fully read. Scoring a ' +
+        'learner against an incomplete reference marks them down for a gap in this tool. ' +
+        'The unreadable lines are:\n' +
+        errors.map((item) => `  line ${item.line}: ${item.text}\n    ${item.message}`).join('\n'),
+    );
+  }
+
+  const random = seededRandom(seed);
+  const reference = parsed.graph;
+
+  const nodeCards = [...reference.nodes.values()].map((node) => ({
+    id: node.id,
+    label: nodeLabel(node),
+    shape: nodeShape(node),
+    subgraph: subgraphPath(reference, node).join(' / ') || null,
+  }));
+
+  const relationCards = reference.edges.map((edge, index) => ({
+    cardId: `r${index + 1}`,
+    label: edge.label,
+    kind: edge.kind,
+    head: edge.head,
+    directed: edge.head !== 'open',
+  }));
+
+  const subgraphs = [...reference.subgraphs.values()].map((group) => ({
+    id: group.id,
+    title: group.title === null ? group.id : group.title,
+  }));
+
+  return {
+    blockIndex,
+    seed,
+    prose: proseWithout(markdown, blockIndex),
+    source: parsed.block ? parsed.block.code : '',
+    reference,
+    diagnostics: parsed.diagnostics,
+    blockCount: parsed.blocks.length,
+    pile: {
+      nodes: shuffle(nodeCards, random),
+      relations: shuffle(relationCards, random),
+      subgraphs,
+    },
+  };
+}
+
+/**
+ * Build an attempt graph from what the page collected: the node cards the learner kept, and
+ * the placements they made. Positions are accepted and thrown away, since nothing scores them.
+ *
+ * `options.include` narrows the pile to the node cards the learner actually used. Left out,
+ * every card counts as placed, which is the page's default because every card starts on the
+ * board.
+ */
+function attemptFromPlacements(pile, placements, options = {}) {
+  const graph = createGraph('TD');
+  const include = options.include ? new Set(options.include) : null;
+  const byTitle = new Map();
+  for (const group of pile.subgraphs || []) {
+    graph.subgraphs.set(group.id, { id: group.id, title: group.title, parent: null });
+    byTitle.set(group.title, group.id);
+  }
+  for (const card of pile.nodes) {
+    if (include && !include.has(card.id)) continue;
+    const node = ensureNode(graph, card.id);
+    node.label = card.label;
+    node.shape = card.shape;
+    node.subgraph = card.subgraph ? byTitle.get(card.subgraph) ?? null : null;
+  }
+  for (const placement of placements) {
+    if (!graph.nodes.has(placement.from) || !graph.nodes.has(placement.to)) {
+      throw new DrillError(
+        `placement refers to "${placement.from}" or "${placement.to}", which is not a node ` +
+          'card in this drill.',
+      );
+    }
+    graph.edges.push({
+      from: placement.from,
+      to: placement.to,
+      kind: placement.kind || 'solid',
+      head: placement.head || 'arrow',
+      label: placement.label ?? null,
+      line: null,
+    });
+  }
+  return graph;
+}
+
+/* ---- src/ui.js ---- */
+/**
+ * The interactive drill.
+ *
+ * Two rules govern the interaction design.
+ *
+ * 1. Nothing requires a mouse. Dragging a node around the board is a convenience and it is
+ *    never the only way to do anything. Every relation is placed through a form of three
+ *    selects and a button, every placed relation can be reversed or removed from a button, and
+ *    a focused node can be moved with the arrow keys. A page that cannot be used from the
+ *    keyboard excludes people.
+ *
+ * 2. Where a node sits is not part of the answer. The board exists so the graph can be looked
+ *    at. The scorer never sees a coordinate, and the page says so where the learner can read it.
+ */
+
+/* global document, window, FileReader, requestAnimationFrame */
+
+// These imports are what makes this file a valid module on its own. The page build in
+// `page.js` concatenates every module into one scope and strips the import lines, so in the
+// published page these names are already in scope.
+
+
+
+
+const NODE_WIDTH = 132;
+const NODE_HEIGHT = 52;
+
+const state = {
+  markdown: '',
+  blockIndex: 0,
+  drill: null,
+  placements: [],
+  nextPlacementId: 1,
+  positions: new Map(),
+  revealed: false,
+  lastResult: null,
+};
+
+function $(id) {
+  return document.getElementById(id);
+}
+
+function clear(element) {
+  while (element.firstChild) element.removeChild(element.firstChild);
+}
+
+function el(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key === 'class') node.className = value;
+    else if (key === 'text') node.textContent = value;
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (value !== null && value !== false) node.setAttribute(key, value);
+  }
+  for (const child of children) node.appendChild(child);
+  return node;
+}
+
+function svg(tag, attrs = {}) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value === null || value === undefined) continue;
+    node.setAttribute(key, String(value));
+  }
+  return node;
+}
+
+function announce(message) {
+  const live = $('live');
+  live.textContent = '';
+  // A live region only speaks when its text changes, and replacing identical text with itself
+  // is not a change. The extra frame is what makes a repeated message announce twice.
+  requestAnimationFrame(() => {
+    live.textContent = message;
+  });
+}
+
+/* ------------------------------------------------------------------ loading a document */
+
+function loadMarkdown(markdown, { blockIndex = 0, sourceName = 'pasted text' } = {}) {
+  state.markdown = markdown;
+  state.blockIndex = blockIndex;
+  state.placements = [];
+  state.positions = new Map();
+  state.revealed = false;
+  state.lastResult = null;
+
+  const problems = $('problems');
+  clear(problems);
+  problems.hidden = true;
+
+  let drill;
+  try {
+    drill = buildDrill(markdown, { blockIndex, seed: 7 });
+  } catch (error) {
+    state.drill = null;
+    problems.hidden = false;
+    problems.appendChild(el('h3', { text: 'This diagram could not be read' }));
+    problems.appendChild(
+      el('p', {
+        text:
+          'The drill is not built, because scoring against a diagram this tool only partly ' +
+          'understood would mark you down for a gap in the tool rather than a gap in your ' +
+          'recall.',
+      }),
+    );
+    problems.appendChild(el('pre', { text: error.message }));
+    renderEverything();
+    return;
+  }
+
+  state.drill = drill;
+  layoutNodes(drill.pile.nodes);
+  $('source-name').textContent = sourceName;
+  const blockSelect = $('block-index');
+  clear(blockSelect);
+  for (let i = 0; i < drill.blockCount; i += 1) {
+    blockSelect.appendChild(
+      el('option', { value: String(i), text: `block ${i + 1} of ${drill.blockCount}` }),
+    );
+  }
+  blockSelect.value = String(blockIndex);
+  blockSelect.disabled = drill.blockCount < 2;
+
+  renderDiagnostics(drill.diagnostics);
+  renderEverything();
+  announce(
+    `Loaded ${sourceName}. ${drill.pile.nodes.length} nodes and ` +
+      `${drill.pile.relations.length} relations to place.`,
+  );
+}
+
+function renderDiagnostics(diagnostics) {
+  const box = $('diagnostics');
+  clear(box);
+  const interesting = diagnostics.filter((item) => item.severity !== 'info');
+  const info = diagnostics.filter((item) => item.severity === 'info');
+  if (diagnostics.length === 0) {
+    box.appendChild(
+      el('p', { class: 'ok', text: 'Every line of the mermaid block was understood.' }),
+    );
+    return;
+  }
+  box.appendChild(
+    el('p', {
+      text:
+        `${diagnostics.length} note${diagnostics.length === 1 ? '' : 's'} from the parser. ` +
+        `${info.length} of them are directives that cannot change the graph.`,
+    }),
+  );
+  const list = el('ul', { class: 'diagnostics' });
+  for (const item of [...interesting, ...info]) {
+    list.appendChild(
+      el('li', { class: `sev-${item.severity}` }, [
+        el('span', { class: 'sev', text: item.severity }),
+        el('span', { text: ` line ${item.line}: ${item.message}` }),
+      ]),
+    );
+  }
+  box.appendChild(list);
+}
+
+/* ------------------------------------------------------------------------ board layout */
+
+function layoutNodes(cards) {
+  const count = cards.length || 1;
+  const radiusX = Math.max(180, count * 34);
+  const radiusY = Math.max(120, count * 22);
+  cards.forEach((card, index) => {
+    const angle = (index / count) * Math.PI * 2 - Math.PI / 2;
+    state.positions.set(card.id, {
+      x: Math.round(radiusX + radiusX * 0.82 * Math.cos(angle)),
+      y: Math.round(radiusY + radiusY * 0.82 * Math.sin(angle)),
+    });
+  });
+}
+
+function boardExtent() {
+  let maxX = 320;
+  let maxY = 240;
+  for (const point of state.positions.values()) {
+    maxX = Math.max(maxX, point.x + NODE_WIDTH);
+    maxY = Math.max(maxY, point.y + NODE_HEIGHT);
+  }
+  return { width: maxX + 40, height: maxY + 40 };
+}
+
+function shapeElement(shape, x, y) {
+  const w = NODE_WIDTH;
+  const h = NODE_HEIGHT;
+  const points = (list) => list.map(([px, py]) => `${x + px},${y + py}`).join(' ');
+  switch (shape) {
+    case 'diamond':
+      return [svg('polygon', { points: points([[w / 2, 0], [w, h / 2], [w / 2, h], [0, h / 2]]) })];
+    case 'hexagon':
+      return [
+        svg('polygon', {
+          points: points([[14, 0], [w - 14, 0], [w, h / 2], [w - 14, h], [14, h], [0, h / 2]]),
+        }),
+      ];
+    case 'circle':
+      return [svg('ellipse', { cx: x + w / 2, cy: y + h / 2, rx: w / 2, ry: h / 2 })];
+    case 'double-circle':
+      return [
+        svg('ellipse', { cx: x + w / 2, cy: y + h / 2, rx: w / 2, ry: h / 2 }),
+        svg('ellipse', {
+          cx: x + w / 2,
+          cy: y + h / 2,
+          rx: w / 2 - 5,
+          ry: h / 2 - 5,
+          class: 'inner',
+        }),
+      ];
+    case 'stadium':
+      return [svg('rect', { x, y, width: w, height: h, rx: h / 2, ry: h / 2 })];
+    case 'round':
+      return [svg('rect', { x, y, width: w, height: h, rx: 12, ry: 12 })];
+    case 'cylinder':
+      return [
+        svg('rect', { x, y: y + 7, width: w, height: h - 14 }),
+        svg('ellipse', { cx: x + w / 2, cy: y + 7, rx: w / 2, ry: 7, class: 'inner' }),
+      ];
+    case 'subroutine':
+      return [
+        svg('rect', { x, y, width: w, height: h }),
+        svg('line', { x1: x + 8, y1: y, x2: x + 8, y2: y + h, class: 'inner' }),
+        svg('line', { x1: x + w - 8, y1: y, x2: x + w - 8, y2: y + h, class: 'inner' }),
+      ];
+    case 'parallelogram':
+    case 'parallelogram-alt':
+      return [svg('polygon', { points: points([[16, 0], [w, 0], [w - 16, h], [0, h]]) })];
+    case 'trapezoid':
+    case 'trapezoid-alt':
+      return [svg('polygon', { points: points([[18, 0], [w - 18, 0], [w, h], [0, h]]) })];
+    case 'asymmetric':
+      return [svg('polygon', { points: points([[0, 0], [w - 14, 0], [w, h / 2], [w - 14, h], [0, h]]) })];
+    default:
+      return [svg('rect', { x, y, width: w, height: h, rx: 3, ry: 3 })];
+  }
+}
+
+function centreOf(id) {
+  const point = state.positions.get(id) || { x: 0, y: 0 };
+  return { x: point.x + NODE_WIDTH / 2, y: point.y + NODE_HEIGHT / 2 };
+}
+
+/** Where a line from `from` to `to` leaves the box around `from`. */
+function boundaryPoint(from, to) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (dx === 0 && dy === 0) return from;
+  const halfW = NODE_WIDTH / 2 + 4;
+  const halfH = NODE_HEIGHT / 2 + 4;
+  const scale = Math.min(
+    dx === 0 ? Infinity : halfW / Math.abs(dx),
+    dy === 0 ? Infinity : halfH / Math.abs(dy),
+  );
+  return { x: from.x + dx * scale, y: from.y + dy * scale };
+}
+
+function renderBoard() {
+  const host = $('board');
+  clear(host);
+  if (!state.drill) {
+    host.appendChild(el('p', { class: 'muted', text: 'No drill loaded.' }));
+    return;
+  }
+  const { width, height } = boardExtent();
+  const root = svg('svg', {
+    viewBox: `0 0 ${width} ${height}`,
+    width,
+    height,
+    role: 'img',
+    'aria-label':
+      'The board. Node positions are decoration and are not scored. The same information is ' +
+      'in the list of placed relations below.',
+    'data-testid': 'board-svg',
+  });
+
+  const defs = svg('defs');
+  for (const [name, cls] of [['arrow', 'head-arrow'], ['circleend', 'head-circle'], ['crossend', 'head-cross']]) {
+    const marker = svg('marker', {
+      id: `marker-${name}`,
+      viewBox: '0 0 10 10',
+      refX: 9,
+      refY: 5,
+      markerWidth: 7,
+      markerHeight: 7,
+      orient: 'auto-start-reverse',
+      class: cls,
+    });
+    if (name === 'arrow') marker.appendChild(svg('path', { d: 'M 0 0 L 10 5 L 0 10 z' }));
+    if (name === 'circleend') marker.appendChild(svg('circle', { cx: 5, cy: 5, r: 4 }));
+    if (name === 'crossend') {
+      marker.appendChild(svg('path', { d: 'M 1 1 L 9 9 M 9 1 L 1 9' }));
+    }
+    defs.appendChild(marker);
+  }
+  root.appendChild(defs);
+
+  const edgeLayer = svg('g', { class: 'edges' });
+  const pairSeen = new Map();
+  for (const placement of state.placements) {
+    const key = [placement.from, placement.to].sort().join('|');
+    const seen = pairSeen.get(key) || 0;
+    pairSeen.set(key, seen + 1);
+    const a = centreOf(placement.from);
+    const b = centreOf(placement.to);
+    const start = boundaryPoint(a, b);
+    const end = boundaryPoint(b, a);
+    const bow = seen * 26 * (placement.from < placement.to ? 1 : -1);
+    const midX = (start.x + end.x) / 2 - (end.y - start.y) * (bow / 400);
+    const midY = (start.y + end.y) / 2 + (end.x - start.x) * (bow / 400);
+    const marker =
+      placement.head === 'arrow'
+        ? 'url(#marker-arrow)'
+        : placement.head === 'circle'
+          ? 'url(#marker-circleend)'
+          : placement.head === 'cross'
+            ? 'url(#marker-crossend)'
+            : null;
+    edgeLayer.appendChild(
+      svg('path', {
+        d: `M ${start.x} ${start.y} Q ${midX} ${midY} ${end.x} ${end.y}`,
+        class: `edge kind-${placement.kind}`,
+        'marker-end': marker,
+        fill: 'none',
+      }),
+    );
+    if (placement.label) {
+      const text = svg('text', { x: midX, y: midY - 6, class: 'edge-label' });
+      text.textContent = placement.label;
+      edgeLayer.appendChild(text);
+    }
+  }
+  root.appendChild(edgeLayer);
+
+  for (const card of state.drill.pile.nodes) {
+    const point = state.positions.get(card.id) || { x: 0, y: 0 };
+    const group = svg('g', {
+      class: 'node',
+      tabindex: '0',
+      role: 'button',
+      'data-node': card.id,
+      'aria-label':
+        `${card.label}. Drag or use the arrow keys to move it. Moving it does not change ` +
+        'your answer.',
+    });
+    for (const piece of shapeElement(card.shape, point.x, point.y)) group.appendChild(piece);
+    const text = svg('text', {
+      x: point.x + NODE_WIDTH / 2,
+      y: point.y + NODE_HEIGHT / 2 + 4,
+      'text-anchor': 'middle',
+      class: 'node-label',
+    });
+    text.textContent = card.label.length > 18 ? `${card.label.slice(0, 17)}…` : card.label;
+    group.appendChild(text);
+    const title = svg('title');
+    title.textContent = card.label;
+    group.appendChild(title);
+    attachNodeInteraction(group, card, root);
+    root.appendChild(group);
+  }
+
+  host.appendChild(root);
+}
+
+function attachNodeInteraction(group, card, root) {
+  group.addEventListener('keydown', (event) => {
+    const step = event.shiftKey ? 24 : 8;
+    const point = state.positions.get(card.id);
+    const moves = {
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+    };
+    if (!moves[event.key]) return;
+    event.preventDefault();
+    state.positions.set(card.id, {
+      x: Math.max(0, point.x + moves[event.key][0]),
+      y: Math.max(0, point.y + moves[event.key][1]),
+    });
+    renderBoard();
+    const moved = root.parentElement.querySelector(`[data-node="${card.id}"]`);
+    if (moved) moved.focus();
+  });
+
+  group.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    const svgRoot = root;
+    const startPoint = state.positions.get(card.id);
+    const rect = svgRoot.getBoundingClientRect();
+    const scale = rect.width / svgRoot.viewBox.baseVal.width || 1;
+    const originX = event.clientX;
+    const originY = event.clientY;
+    let moved = false;
+    const move = (moveEvent) => {
+      moved = true;
+      state.positions.set(card.id, {
+        x: Math.max(0, Math.round(startPoint.x + (moveEvent.clientX - originX) / scale)),
+        y: Math.max(0, Math.round(startPoint.y + (moveEvent.clientY - originY) / scale)),
+      });
+      renderBoard();
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      if (moved) announce(`${card.label} moved. Positions are not scored.`);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+}
+
+/* -------------------------------------------------------------------------- the pile */
+
+function usedCardIds() {
+  return new Set(state.placements.map((placement) => placement.cardId).filter(Boolean));
+}
+
+function describeCard(card) {
+  const style = `${card.kind} ${card.head === 'open' ? 'line, no direction' : card.head}`;
+  return card.label ? `"${card.label}" (${style})` : `unlabelled (${style})`;
+}
+
+function renderPile() {
+  const host = $('pile');
+  clear(host);
+  if (!state.drill) return;
+  const used = usedCardIds();
+  const remaining = state.drill.pile.relations.filter((card) => !used.has(card.cardId));
+  host.appendChild(
+    el('p', {
+      'data-testid': 'pile-count',
+      text:
+        `${remaining.length} of ${state.drill.pile.relations.length} relation cards still to ` +
+        'place. Each card tells you the wording and the line style. Which two nodes it joins ' +
+        'and which way it points are the parts you are recalling.',
+    }),
+  );
+  const list = el('ul', { class: 'cards', 'data-testid': 'relation-cards' });
+  for (const card of remaining) {
+    list.appendChild(el('li', { class: 'card', text: describeCard(card) }));
+  }
+  if (remaining.length === 0) {
+    list.appendChild(el('li', { class: 'card done', text: 'Every card has been placed.' }));
+  }
+  host.appendChild(list);
+}
+
+function renderPlacementForm() {
+  const fromSelect = $('edge-from');
+  const toSelect = $('edge-to');
+  const cardSelect = $('edge-card');
+  for (const select of [fromSelect, toSelect]) {
+    const previous = select.value;
+    clear(select);
+    if (state.drill) {
+      for (const card of [...state.drill.pile.nodes].sort((a, b) => a.label.localeCompare(b.label))) {
+        select.appendChild(el('option', { value: card.id, text: card.label }));
+      }
+    }
+    if (previous) select.value = previous;
+  }
+  const previousCard = cardSelect.value;
+  clear(cardSelect);
+  if (state.drill) {
+    const used = usedCardIds();
+    for (const card of state.drill.pile.relations) {
+      if (used.has(card.cardId)) continue;
+      cardSelect.appendChild(
+        el('option', { value: card.cardId, text: describeCard(card) }),
+      );
+    }
+    cardSelect.appendChild(
+      el('option', { value: '', text: 'a relation that is not in the pile' }),
+    );
+  }
+  if (previousCard) cardSelect.value = previousCard;
+}
+
+function renderPlacements() {
+  const host = $('placements');
+  clear(host);
+  if (state.placements.length === 0) {
+    host.appendChild(
+      el('li', {
+        class: 'muted',
+        text: 'Nothing placed yet. This list is the answer that gets scored.',
+      }),
+    );
+    return;
+  }
+  for (const placement of state.placements) {
+    const fromLabel = labelFor(placement.from);
+    const toLabel = labelFor(placement.to);
+    const arrow = placement.head === 'open' ? '---' : '-->';
+    const middle = placement.label ? ` ${arrow}|${placement.label}| ` : ` ${arrow} `;
+    host.appendChild(
+      el('li', { class: 'placement' }, [
+        el('span', { class: 'relation', text: `${fromLabel}${middle}${toLabel}` }),
+        el('span', { class: 'actions' }, [
+          el('button', {
+            type: 'button',
+            class: 'small',
+            'data-reverse': String(placement.id),
+            text: 'Reverse',
+            'aria-label': `Reverse the relation from ${fromLabel} to ${toLabel}`,
+            onclick: () => reversePlacement(placement.id),
+          }),
+          el('button', {
+            type: 'button',
+            class: 'small',
+            'data-remove': String(placement.id),
+            text: 'Remove',
+            'aria-label': `Remove the relation from ${fromLabel} to ${toLabel}`,
+            onclick: () => removePlacement(placement.id),
+          }),
+        ]),
+      ]),
+    );
+  }
+}
+
+function labelFor(id) {
+  if (!state.drill) return id;
+  const card = state.drill.pile.nodes.find((item) => item.id === id);
+  return card ? card.label : id;
+}
+
+function addPlacement() {
+  if (!state.drill) return;
+  const from = $('edge-from').value;
+  const to = $('edge-to').value;
+  const cardId = $('edge-card').value;
+  if (!from || !to) return;
+  if (from === to) {
+    announce('A relation needs two different nodes.');
+    return;
+  }
+  const card = state.drill.pile.relations.find((item) => item.cardId === cardId);
+  state.placements.push({
+    id: state.nextPlacementId,
+    cardId: card ? card.cardId : null,
+    from,
+    to,
+    kind: card ? card.kind : 'solid',
+    head: card ? card.head : 'arrow',
+    label: card ? card.label : null,
+  });
+  state.nextPlacementId += 1;
+  renderEverything();
+  announce(`Placed ${labelFor(from)} to ${labelFor(to)}.`);
+}
+
+function reversePlacement(id) {
+  const placement = state.placements.find((item) => item.id === id);
+  if (!placement) return;
+  [placement.from, placement.to] = [placement.to, placement.from];
+  renderEverything();
+  announce(`Reversed. It now runs ${labelFor(placement.from)} to ${labelFor(placement.to)}.`);
+}
+
+function removePlacement(id) {
+  state.placements = state.placements.filter((item) => item.id !== id);
+  renderEverything();
+  announce('Removed.');
+}
+
+/* --------------------------------------------------------------------------- scoring */
+
+function check() {
+  if (!state.drill) return;
+  const attempt = attemptFromPlacements(state.drill.pile, state.placements);
+  let result;
+  try {
+    result = score(state.drill.reference, attempt);
+  } catch (error) {
+    $('result').hidden = false;
+    clear($('result-body'));
+    $('result-body').appendChild(el('p', { class: 'bad', text: error.message }));
+    return;
+  }
+  state.lastResult = result;
+  renderResult(result, attempt);
+  announce(
+    result.perfect
+      ? 'Correct. Distance zero.'
+      : `Distance ${result.totals.total}. ${result.totals.structure} structural, ` +
+          `${result.totals.label} label.`,
+  );
+}
+
+function renderResult(result, attempt) {
+  const panel = $('result');
+  const body = $('result-body');
+  panel.hidden = false;
+  clear(body);
+
+  body.appendChild(
+    el('p', { class: result.perfect ? 'verdict ok' : 'verdict', 'data-testid': 'verdict' }, [
+      el('strong', {
+        text: result.perfect
+          ? 'Distance 0. Your reconstruction matches the reference exactly.'
+          : `Graph edit distance ${result.totals.total}.`,
+      }),
+    ]),
+  );
+
+  const scoreboard = el('dl', { class: 'scoreboard', 'data-testid': 'scoreboard' });
+  for (const [name, value, note] of [
+    ['Structure', result.totals.structure, 'nodes, relations and which way they run'],
+    ['Labels', result.totals.label, 'the words on a node or a relation'],
+    ['Style', result.totals.style, 'shapes and line styles'],
+    ['Grouping', result.totals.grouping, 'which subgraph a node sits in'],
+  ]) {
+    scoreboard.appendChild(el('dt', { text: name }));
+    scoreboard.appendChild(
+      el('dd', { 'data-bucket': name.toLowerCase() }, [
+        el('span', { class: value === 0 ? 'num ok' : 'num', text: String(value) }),
+        el('span', { class: 'note', text: note }),
+      ]),
+    );
+  }
+  body.appendChild(scoreboard);
+
+  for (const line of headlines(result)) {
+    body.appendChild(el('p', { class: 'headline', text: line }));
+  }
+
+  const reversals = result.findings.filter((finding) => finding.type === 'edge-reversed');
+  if (reversals.length) {
+    const box = el('div', { class: 'reversals', 'data-testid': 'reversals' });
+    box.appendChild(
+      el('h3', {
+        text: reversals.length === 1 ? 'One relation is backwards' : `${reversals.length} relations are backwards`,
+      }),
+    );
+    for (const finding of reversals) {
+      box.appendChild(
+        el('p', { text: describeFinding(finding, state.drill.reference, attempt) }),
+      );
+    }
+    body.appendChild(box);
+  }
+
+  const others = result.findings.filter((finding) => finding.type !== 'edge-reversed');
+  if (others.length) {
+    const list = el('ul', { class: 'findings', 'data-testid': 'findings' });
+    for (const finding of others) {
+      list.appendChild(
+        el('li', { text: describeFinding(finding, state.drill.reference, attempt) }),
+      );
+    }
+    body.appendChild(el('h3', { text: 'Everything else' }));
+    body.appendChild(list);
+  }
+
+  body.appendChild(
+    el('details', { class: 'method' }, [
+      el('summary', { text: 'How this number was computed' }),
+      el('p', { text: `Algorithm: ${result.algorithm}.` }),
+      el('p', { text: `Complexity: ${result.complexity}.` }),
+      el('p', {
+        text: result.exact
+          ? 'This is an exact distance under the cost model, not an estimate.'
+          : 'This is an UPPER BOUND. The method cannot prove it is the smallest edit script, ' +
+            'so the true distance may be lower.',
+      }),
+      result.note ? el('p', { text: result.note }) : el('span', {}),
+      el('p', {
+        text:
+          'Reversing a relation costs 1 here. Textbook graph edit distance has no reversal ' +
+          'operation and charges 2 for the same mistake, one deletion and one insertion. ' +
+          'Charging 1 and naming it is the whole point of this tool.',
+      }),
+      el('p', {
+        text:
+          'Node positions are not part of the comparison. A graph has no canonical layout, ' +
+          'so the same graph arranged differently is the same graph.',
+      }),
+    ]),
+  );
+}
+
+function revealReference() {
+  const panel = $('reference');
+  state.revealed = !state.revealed;
+  panel.hidden = !state.revealed;
+  $('reveal').textContent = state.revealed ? 'Hide the reference' : 'Show the reference';
+  if (state.revealed && state.drill) {
+    $('reference-source').textContent = state.drill.source;
+  }
+}
+
+/* ---------------------------------------------------------------------------- render */
+
+function renderEverything() {
+  const hasDrill = Boolean(state.drill);
+  $('drill').hidden = !hasDrill;
+  if (hasDrill) {
+    $('prose').textContent = state.drill.prose.trim();
+  }
+  renderPile();
+  renderPlacementForm();
+  renderPlacements();
+  renderBoard();
+  if (state.lastResult) {
+    $('result').hidden = true;
+    state.lastResult = null;
+  }
+}
+
+/* ----------------------------------------------------------------------------- theme */
+
+function applyTheme(theme) {
+  if (theme === 'system') {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+  $('theme').value = theme;
+}
+
+/* ------------------------------------------------------------------------------ boot */
+
+function boot(samples) {
+  $('theme').addEventListener('change', (event) => applyTheme(event.target.value));
+  applyTheme('system');
+
+  const sampleSelect = $('sample');
+  for (const sample of samples) {
+    sampleSelect.appendChild(el('option', { value: sample.name, text: sample.title }));
+  }
+  sampleSelect.addEventListener('change', () => {
+    const sample = samples.find((item) => item.name === sampleSelect.value);
+    if (sample) loadMarkdown(sample.markdown, { sourceName: sample.title });
+  });
+
+  $('block-index').addEventListener('change', (event) => {
+    loadMarkdown(state.markdown, {
+      blockIndex: Number(event.target.value),
+      sourceName: $('source-name').textContent,
+    });
+  });
+
+  $('add-edge').addEventListener('click', addPlacement);
+  $('check').addEventListener('click', check);
+  $('reveal').addEventListener('click', revealReference);
+  $('reset').addEventListener('click', () => {
+    state.placements = [];
+    renderEverything();
+    announce('Cleared. Nothing is placed.');
+  });
+
+  $('paste-load').addEventListener('click', () => {
+    const text = $('paste').value;
+    if (!text.trim()) {
+      announce('The box is empty.');
+      return;
+    }
+    loadMarkdown(text, { sourceName: 'pasted markdown' });
+  });
+
+  $('file').addEventListener('change', (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => loadMarkdown(String(reader.result), { sourceName: file.name });
+    reader.readAsText(file);
+  });
+
+  loadMarkdown(samples[0].markdown, { sourceName: samples[0].title });
+  document.documentElement.setAttribute('data-ready', 'yes');
+}
+
+const SAMPLES = [{"name":"build-pipeline.md","title":"A build pipeline, and which stage depends on which","markdown":"# A build pipeline, and which stage depends on which\n\nThis one is here because it uses subgraphs, several link styles, and a couple of relations that\nrun in the direction people do not expect.\n\nSource files are compiled into object files. Object files are linked into a binary. That much\nis obvious. The two that catch people out are the cache and the test suite. The compiler reads\nthe cache and also writes to it, so there are two links between them and they point opposite\nways. And the test suite depends on the binary, not the other way round, even though a failing\ntest is usually described as blocking the build.\n\n```mermaid\ngraph TD\n  subgraph compile [Compile stage]\n    Source[Source files] --> Compiler{Compiler}\n    Compiler --> Objects[Object files]\n    Compiler --> Cache[(Build cache)]\n    Cache --> Compiler\n  end\n  subgraph link [Link stage]\n    Objects ==> Linker[Linker]\n    Linker ==> Binary((Binary))\n  end\n  Binary --> Tests[/Test suite/]\n  Tests -.->|failure report| Compiler\n  Binary --- Artifact[Release artifact]\n```\n\nThe dotted link is a report rather than a build dependency, and the plain undirected line\nbetween the binary and the release artifact says the two are the same bytes under different\nnames, with no direction to the relationship at all.\n"},{"name":"photosynthesis.md","title":"How a leaf turns light into sugar","markdown":"# How a leaf turns light into sugar\n\nPhotosynthesis is two linked stages, and the thing worth remembering is which way each\ndependency runs. The light dependent reactions happen in the thylakoid membrane. They take in\nlight and water, and they produce three things: oxygen, which leaves the plant, and two\nenergy carriers called ATP and NADPH, which do not.\n\nThe Calvin cycle happens in the stroma, outside the thylakoid. It consumes carbon dioxide, and\nit consumes the ATP and NADPH the first stage made. It produces the sugar G3P, from which the\nplant builds glucose.\n\nThe direction that people most often get backwards is between the two stages. The light\nreactions feed the Calvin cycle, and not the other way round. The Calvin cycle sends the spent\ncarriers back, which is a real dependency but a different one, and it runs from the cycle to\nthe light reactions rather than from them to it.\n\n```mermaid\ngraph TD\n  Light[Sunlight] --> LightRx[Light dependent reactions]\n  Water[Water] --> LightRx\n  LightRx -->|oxygen| Air[Atmosphere]\n  LightRx -->|ATP and NADPH| Calvin[Calvin cycle]\n  CO2[Carbon dioxide] --> Calvin\n  Calvin -->|G3P| Sugar[Glucose]\n  Calvin -.->|spent carriers| LightRx\n```\n\nThree details in that diagram are worth checking yourself on. Water enters the light reactions\nand not the Calvin cycle. Carbon dioxide enters the Calvin cycle and not the light reactions.\nAnd the return path for the spent carriers is drawn dotted, because it is a recycling loop\nrather than a forward step in the pathway.\n"},{"name":"tcp-handshake.md","title":"What happens before a TCP connection carries any data","markdown":"# What happens before a TCP connection carries any data\n\nA TCP connection does not start with data. It starts with three messages whose only job is to\nagree that both ends can hear each other, and to agree on the sequence numbers each side will\ncount from.\n\nThe client moves first. It sends a segment with the SYN flag set, carrying its own initial\nsequence number, and then sits in SYN-SENT. The server, which has been sitting in LISTEN,\nanswers with a single segment that has both SYN and ACK set: the ACK confirms the client's\nsequence number and the SYN carries the server's own. The server then sits in SYN-RECEIVED.\nThe client answers that with a plain ACK, and at that point the client considers the\nconnection established. The server considers it established when that third message arrives.\n\nThe asymmetry is the part people get backwards. The middle message goes from server to client,\nnot client to server, and the third goes from client to server again.\n\n```mermaid\nflowchart LR\n  Closed([CLOSED]) --> SynSent[SYN-SENT]\n  SynSent -->|SYN| Listen[LISTEN]\n  Listen --> SynRcvd[SYN-RECEIVED]\n  SynRcvd -->|SYN plus ACK| SynSent\n  SynSent -->|ACK| SynRcvd\n  SynSent --> EstClient([ESTABLISHED client])\n  SynRcvd --> EstServer([ESTABLISHED server])\n```\n\nNote that the two ESTABLISHED states are drawn separately. They are reached at different\nmoments, and treating them as one node hides the window in which the client is sending and the\nserver has not yet finished opening.\n"}];
+boot(SAMPLES);
+</script>
+</body>
+</html>
