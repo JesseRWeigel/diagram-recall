@@ -21,6 +21,7 @@
 import { attemptFromPlacements, buildDrill } from './drill.js';
 import { describeFinding, headlines } from './report.js';
 import { score } from './score.js';
+import { graphToJSON } from './graph.js';
 
 const NODE_WIDTH = 132;
 const NODE_HEIGHT = 52;
@@ -772,5 +773,13 @@ export function boot(samples) {
   });
 
   loadMarkdown(samples[0].markdown, { sourceName: samples[0].title });
+
+  // A deliberate, documented handle on the page's internals. The browser check drives the
+  // real UI through it: it reads the reference, places every relation through the same form a
+  // learner uses, and asserts that a correct reconstruction scores zero. Without a handle the
+  // only end to end assertion available is that some numbers appeared, which a scorer that
+  // always reports errors would also satisfy.
+  window.diagramRecall = { state, score, buildDrill, attemptFromPlacements, graphToJSON };
+
   document.documentElement.setAttribute('data-ready', 'yes');
 }
