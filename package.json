@@ -7,7 +7,7 @@
   "license": "MIT",
   "bin": { "recall": "bin/recall.js" },
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.js",
     "fixtures": "node bin/recall.js fixtures",
     "verify": "bash scripts/verify.sh"
   },
