@@ -504,6 +504,14 @@ def best_distance(reference: Diagram, attempt: Diagram, mode: str) -> dict:
     for chosen in permutations(ref_nodes, min(len(ref_nodes), len(att_nodes))):
         for assignment in permutations(att_nodes, len(chosen)):
             rename = dict(zip(assignment, chosen))
+            # A renamed attempt node must not land on the identifier of an attempt node that
+            # was left unmapped, because distance() works on a SET of attempt names and the
+            # two would silently merge into one node. On the wrong-subgraph fixture the map
+            # {A:A, B:B, D:C} leaves attempt C unmapped, C keeps its name, D also becomes C,
+            # the set collapses to three names, and the correspondence scores 1 by pretending
+            # four nodes are three. No injective correspondence scores below 2 there.
+            if any(node in rename.values() for node in att_nodes if node not in rename):
+                continue
             candidate = distance(reference, attempt, rename)
             if best is None or candidate["total"] < best["total"]:
                 best = candidate
