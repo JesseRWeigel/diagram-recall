@@ -2,6 +2,8 @@
 
 Rebuild a mermaid diagram from a shuffled pile of nodes and edges, scored by graph edit distance
 
+**[Rebuild a diagram from a shuffled pile →](https://jesserweigel.github.io/diagram-recall/)**
+
 Catalog task: `EDU-046`. One of a public catalog of build ideas: https://github.com/JesseRWeigel/722-things-to-build
 
 ## What this is
